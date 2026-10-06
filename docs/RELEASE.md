@@ -57,14 +57,18 @@ These need a repository admin and cannot be done from a workflow.
    environment. The workflow already grants `id-token: write` to the `release` job,
    and stores no registry token. Until this is done the `release` job fails when it
    has something to publish.
-3. **Allow Actions to open PRs.** Repository settings → Actions → General → Workflow
-   permissions → enable *Allow GitHub Actions to create and approve pull requests*.
-4. **Optional: `RELEASE_PLZ_TOKEN`.** A pull request opened with the default
-   `GITHUB_TOKEN` does not trigger other workflows, so CI does not run on the release
-   PR. A fine-grained personal access token (or GitHub App token) with *Contents* and
-   *Pull requests* write access, stored as the `RELEASE_PLZ_TOKEN` secret, fixes that.
-   Without it, the release PR has no required checks to wait for, and you should run
-   `cargo test` on it yourself before merging.
+3. **Let release-plz open PRs: set `RELEASE_PLZ_TOKEN` (recommended).** A
+   fine-grained personal access token (or GitHub App token), owned by `rust-works`
+   and limited to this repository, with *Contents* and *Pull requests* write access,
+   stored as the `RELEASE_PLZ_TOKEN` secret. The `pr` job opens the release PR with it,
+   so CI runs on that PR (a PR opened with the default `GITHUB_TOKEN` does not trigger
+   other workflows). Fine-grained tokens expire, so renew it before then.
+4. **Without the token: allow Actions to open PRs.** Repository settings → Actions →
+   General → Workflow permissions → enable *Allow GitHub Actions to create and approve
+   pull requests*. The `pr` job then falls back to `GITHUB_TOKEN`, and the release PR
+   has no CI checks, so run `cargo test` on it yourself before merging. This is not
+   needed when `RELEASE_PLZ_TOKEN` is set, and the `rust-works` organization policy
+   currently forbids it.
 
 ## If a release goes wrong
 
