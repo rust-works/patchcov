@@ -14,8 +14,8 @@ use super::model::CoverageReport;
 /// Runs every per-shard check on a freshly parsed `report`, before path
 /// filtering and before `prefix` is stripped.
 ///
-/// This is the one place a shard is judged, shared by `coverage diff` (with more
-/// than one `--report`) and `coverage merge`, so the two cannot drift: a shard
+/// This is the one place a shard is judged, shared by `patchcov diff` (with more
+/// than one `--report`) and `patchcov merge`, so the two cannot drift: a shard
 /// with no executable lines is an error, and one measured under another root is
 /// noted in `warnings` when `prefix` is known.
 pub fn check_shard(
@@ -92,7 +92,7 @@ pub fn prefix_mismatch(label: &str, report: &CoverageReport, prefix: &Path) -> O
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use crate::coverage::model::FileCoverage;
+    use crate::model::FileCoverage;
 
     fn report(files: &[(&str, &[(u32, u64)])]) -> CoverageReport {
         let mut report = CoverageReport::new();

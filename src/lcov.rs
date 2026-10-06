@@ -72,7 +72,7 @@ pub fn parse(content: &str) -> Result<CoverageReport> {
 /// `end_of_record`. Function (`FN*`) and branch (`BRDA`) records are not part of
 /// the model and are dropped. `LF`/`LH` count the `DA` records written, so a
 /// file is consistent with itself; `llvm-cov` writes them from its own summary
-/// instead, which counts some lines more than once (#2131).
+/// instead, which counts some lines more than once.
 ///
 /// A file with no executable lines is written as an empty record (`LF:0`,
 /// `LH:0`), the way [`parse`] reads one: leaving it out would make the text read
@@ -172,7 +172,7 @@ end_of_record
     }
 
     /// Shard files joined with a newline parse as the same union
-    /// `CoverageReport::merge` builds. `coverage merge` is the supported way to a
+    /// `CoverageReport::merge` builds. `patchcov merge` is the supported way to a
     /// single file, but a caller that joined shards by hand before it existed is
     /// still read correctly, so that has to stay true.
     ///
@@ -282,7 +282,7 @@ end_of_record
         assert_eq!(report.hits("a.rs", 1), Some(0));
     }
 
-    // ── write (#2118) ────────────────────────────────────────────────────
+    // ── write ────────────────────────────────────────────────────
 
     fn report(files: &[(&str, &[(u32, u64)])]) -> CoverageReport {
         let mut report = CoverageReport::new();
@@ -342,7 +342,7 @@ end_of_record
     }
 
     /// `LF`/`LH` are written from the `DA` records, so the totals agree with the
-    /// lines listed — unlike `llvm-cov`'s own lcov (#2131).
+    /// lines listed — unlike `llvm-cov`'s own lcov.
     #[test]
     fn write_counts_lf_and_lh_from_its_own_da_records() {
         let text = write(&report(&[("a.rs", &[(1, 0), (2, 5), (3, 9)])])).unwrap();

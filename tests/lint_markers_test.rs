@@ -30,12 +30,10 @@ fn lint(root: &Path, paths: &[&str]) -> Output {
 }
 
 fn lint_with(root: &Path, flags: &[&str], paths: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_omni-dev"))
-        // Keep a developer's own global `coverage.yaml` out of the run.
-        .env_remove("OMNI_DEV_CONFIG_DIR")
-        .env("HOME", root)
-        .env("XDG_CONFIG_HOME", root)
-        .args(["coverage", "lint-markers", "-C"])
+    Command::new(env!("CARGO_BIN_EXE_patchcov"))
+        // Keep an ambient override out of the run.
+        .env_remove("PATCHCOV_CONFIG_DIR")
+        .args(["lint-markers", "-C"])
         .arg(root)
         .args(flags)
         .args(paths)
@@ -51,17 +49,17 @@ fn bad() -> String {
     marker("ignore reason=\"unclosed\"")
 }
 
-/// Declares `lint-markers.include` in the repo's `.omni-dev/coverage.yaml`.
+/// Declares `lint-markers.include` in the repo's `.patchcov/config.yaml`.
 fn config_include(repo: &Repository, globs: &[&str]) {
     let mut body = String::from("lint-markers:\n  include:\n");
     for glob in globs {
         body.push_str(&format!("    - '{glob}'\n"));
     }
-    write(repo, ".omni-dev/coverage.yaml", &body, false);
+    write(repo, ".patchcov/config.yaml", &body, false);
 }
 
 fn marker(rest: &str) -> String {
-    format!("// {} {rest}\n", omni_dev::coverage::markers::INTRODUCER)
+    format!("// {} {rest}\n", patchcov::markers::INTRODUCER)
 }
 
 #[test]
@@ -293,7 +291,7 @@ fn config_include_narrows_the_default_scan() {
     let output = lint(root, &[]);
     assert!(output.status.success());
     assert!(
-        err_text(&output).contains("lint-markers.include in coverage.yaml"),
+        err_text(&output).contains("lint-markers.include in config.yaml"),
         "{}",
         err_text(&output)
     );
@@ -321,7 +319,7 @@ fn malformed_config_and_invalid_config_glob_are_errors() {
 
     write(
         &repo,
-        ".omni-dev/coverage.yaml",
+        ".patchcov/config.yaml",
         "lint-markers: [oops\n",
         false,
     );
@@ -337,7 +335,7 @@ fn malformed_config_and_invalid_config_glob_are_errors() {
     let output = lint(root, &[]);
     assert!(!output.status.success());
     assert!(
-        err_text(&output).contains("lint-markers.include in coverage.yaml"),
+        err_text(&output).contains("lint-markers.include in config.yaml"),
         "{}",
         err_text(&output)
     );

@@ -1,7 +1,7 @@
 //! Source comment markers that exclude or tolerate a *region* of a file in
-//! `coverage diff`.
+//! `patchcov diff`.
 //!
-//! `--ignore-filename-regex` (and its `coverage.yaml` twin) drops a **whole
+//! `--ignore-filename-regex` (and its `config.yaml` twin) drops a **whole
 //! file** from both reports, but the noise it exists to silence is almost always
 //! narrower than a file: one function gated on a *runtime* CPU-feature check is
 //! compiled into the denominator on every run yet executed only on a host that
@@ -19,7 +19,7 @@
 //!
 //! A region is opened by a comment naming a kind and a mandatory reason, and
 //! closed by an `end` comment; there is also a single-line form. **The syntax is
-//! documented, with examples, in `docs/coverage.md`** — deliberately not here:
+//! documented, with examples, in `docs/usage.md`** — deliberately not here:
 //! see [`INTRODUCER`] for why this file must not contain a literal marker.
 //!
 //! Two kinds, differing in what they do to the *reports*:
@@ -41,18 +41,18 @@ use anyhow::{bail, Result};
 
 /// The literal that introduces every marker.
 ///
-/// Assembled with `concat!` rather than written out, because omni-dev measures
+/// Assembled with `concat!` rather than written out, because patchcov measures
 /// its own coverage: this file is in its own report, so a contiguous introducer
 /// anywhere in this source — a doc example, a test fixture — would be scanned as
 /// a real marker, and the deliberately-malformed fixtures below would fail
-/// omni-dev's own `coverage diff` run outright. `self_source_contains_no_literal_introducer`
-/// pins that invariant; put examples in `docs/coverage.md`, which is not a
+/// patchcov's own `diff` run outright. `self_source_contains_no_literal_introducer`
+/// pins that invariant; put examples in `docs/usage.md`, which is not a
 /// source file and is never scanned.
 ///
 /// A file that does not contain this substring anywhere cannot carry a marker,
 /// and so cannot raise a marker error either — which is what makes the
 /// whole-file short-circuit in [`scan`] exact rather than merely fast.
-pub const INTRODUCER: &str = concat!("omni-dev", ": coverage");
+pub const INTRODUCER: &str = concat!("patchcov", ": coverage");
 
 /// What a marked region does to the reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -312,17 +312,17 @@ mod tests {
         }
     }
 
-    /// The guard that keeps omni-dev able to measure its own coverage. A literal
+    /// The guard that keeps patchcov able to measure its own coverage. A literal
     /// introducer anywhere in this file would be scanned as a real marker when
-    /// omni-dev runs `coverage diff` on itself, and the malformed fixtures below
-    /// would then fail that run. Examples belong in `docs/coverage.md`.
+    /// patchcov runs `patchcov diff` on itself, and the malformed fixtures below
+    /// would then fail that run. Examples belong in `docs/usage.md`.
     #[test]
     fn self_source_contains_no_literal_introducer() {
         let source = include_str!("markers.rs");
         assert!(
             !source.contains(INTRODUCER),
             "src/coverage/markers.rs must not contain a literal marker introducer; \
-             build fixtures with `mark()` and put examples in docs/coverage.md"
+             build fixtures with `mark()` and put examples in docs/usage.md"
         );
     }
 

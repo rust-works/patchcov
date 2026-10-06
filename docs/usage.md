@@ -1,14 +1,12 @@
-# Coverage diff
+# Usage
 
-`omni-dev coverage diff` attributes a per-line coverage report to a git diff and
+`patchcov diff` attributes a per-line coverage report to a git diff and
 reports **patch coverage** — the share of the lines a change *added* that are
 covered by tests — plus the actionable list of uncovered new lines, per-file
 project deltas, and indirect coverage changes on unchanged code.
 
-It is the engine behind the project's PR coverage comment (rendered in CI by the
-[`action-works/omni-dev-coverage-check`](https://github.com/action-works/omni-dev-coverage-check)
-composite action), but it is a plain CLI command you can also run locally to
-check a branch before you push.
+It renders the PR coverage comment in CI, and it is a plain CLI command you can
+also run locally to check a branch before you push.
 
 ## What it computes
 
@@ -37,7 +35,7 @@ Line coverage only; branch-coverage data in the report is ignored.
   Override detection with
   `--report-format <auto|lcov|llvm-cov-json|cobertura|jacoco|go-coverprofile>`. Pass it
   once per shard to merge a [sharded run](#sharded-runs), or merge the shards
-  into one file first with [`coverage merge`](#merging-shards-into-one-file).
+  into one file first with [`patchcov merge`](#merging-shards-into-one-file).
 - `--base-ref <REV>` / `--head-ref <REV>` — the revisions to diff. Defaults are
   the merge-base of `origin/main` and `HEAD` for the base, and `HEAD` for the
   head (the revision the report was measured at).
@@ -50,8 +48,8 @@ Line coverage only; branch-coverage data in the report is ignored.
 
 Native JaCoCo reports from Java, Kotlin and Scala are auto-detected by their
 `<report>` root, including reports with an XML declaration and JaCoCo DTD.
-Use `--report-format jacoco` to select it explicitly. Both `coverage diff`
-and `coverage merge` accept module reports and aggregate reports with groups.
+Use `--report-format jacoco` to select it explicitly. Both `patchcov diff`
+and `patchcov merge` accept module reports and aggregate reports with groups.
 A line with `ci > 0` is covered, including a partially covered line with both
 missed and covered instructions. Instruction counts become boolean hits;
 branch counters and class/method summaries do not contribute to line coverage.
@@ -72,14 +70,14 @@ cargo llvm-cov --no-report      # instrument + run tests
 cargo llvm-cov report --lcov --output-path head.lcov
 
 # 2. Attribute it to the diff against the default merge-base.
-omni-dev coverage diff --report head.lcov
+patchcov diff --report head.lcov
 
 # 3. Gate a branch locally: fail if patch coverage is under 80%, or overall
 #    line coverage is under 70%.
-omni-dev coverage diff --report head.lcov --fail-under-patch 80 --fail-under-lines 70
+patchcov diff --report head.lcov --fail-under-patch 80 --fail-under-lines 70
 
 # 4. Full report with project deltas, as JSON for tooling.
-omni-dev coverage diff \
+patchcov diff \
   --report head.lcov --baseline-report base.lcov \
   -o json
 ```
@@ -91,7 +89,7 @@ mismatch can leave patch coverage empty even when overall coverage is present.
 Check the `SF:` records (lcov), `filename` attributes (Cobertura), or package and
 sourcefile names (JaCoCo) against `git ls-files` before trusting a patch gate.
 
-The path pipeline for `coverage diff` is:
+The path pipeline for `patchcov diff` is:
 
 1. Parse the report. For a native Go coverprofile, strip the module import path
    from the repository root's `go.mod`, if available.
@@ -110,7 +108,7 @@ its module or `src/main/java` directory.
 For reports generated under a different checkout, remove that runner's root:
 
 ```bash
-omni-dev coverage diff --report head.lcov \
+patchcov diff --report head.lcov \
   --strip-prefix /home/runner/work/project/project
 ```
 
@@ -118,7 +116,7 @@ One strip prefix applies to both head and baseline. If they came from different
 roots, map each root explicitly instead:
 
 ```yaml
-# .omni-dev/coverage.yaml
+# .patchcov/config.yaml
 diff:
   path-mappings:
     - from: /ci/head/project
@@ -132,7 +130,7 @@ diff:
 Use explicit directory replacements when a tool omits a directory git retains:
 
 ```yaml
-# .omni-dev/coverage.yaml — choose the mappings for your report, not all examples
+# .patchcov/config.yaml — choose the mappings for your report, not all examples
 diff:
   path-mappings:
     # nyc invoked inside packages/web: src/app.ts -> packages/web/src/app.ts
@@ -165,7 +163,7 @@ filenames unique in each module report before combining. There is no filesystem
 search or guessed source-root selection.
 
 Mappings use the same config discovery and override rules as the ignore-list.
-They belong to `coverage diff`; `coverage merge` does not read this block. Merge
+They belong to `patchcov diff`; `patchcov merge` does not read this block. Merge
 repo-relative reports, use its `--strip-prefix` for a common runner root, or
 normalise module reports before merging them.
 
@@ -173,7 +171,7 @@ normalise module reports before merging them.
 
 The parser depends on the report format, not the source language. Run coverage
 against the head revision, produce a report below, then use
-`omni-dev coverage diff --report <report>` (and optionally a baseline produced
+`patchcov diff --report <report>` (and optionally a baseline produced
 at the base revision). Reports must include per-line records; summary-only JSON,
 HTML, Clover XML and OpenCover XML are not supported. Branch/function data is
 ignored. Install/configure each tool in your project before using these examples.
@@ -235,7 +233,7 @@ ignored. Install/configure each tool in your project before using these examples
   if `reports.xml.required = true` is configured. Map the package path to the
   correct module's source root; see [JaCoCo XML](#jacoco-xml).
 
-The [non-Rust fixtures](../tests/fixtures/coverage/non-rust/README.md) record
+The [non-Rust fixtures](../tests/fixtures/non-rust/README.md) record
 producer provenance and exercise git patch attribution without installing all
 these toolchains to run the Rust tests.
 
@@ -278,7 +276,7 @@ error.
   the change and passes. A gate that passed on an empty report would let a
   silently failed coverage run through.
 
-Because the gate needs only the report, it works wherever `coverage diff` does —
+Because the gate needs only the report, it works wherever `patchcov diff` does —
 including when the report was produced elsewhere (for example, from several CI
 jobs, see [Sharded runs](#sharded-runs)) and the profile data is not on the
 machine running the gate.
@@ -292,11 +290,11 @@ contains both:
 |-------------------------------------------------------------|--------:|--------:|----------:|--------:|
 | `llvm-cov report --summary-only` (the `TOTAL` row)          | 331,417 | 321,311 |    10,106 | 96.9507 |
 | lcov `LF:` / `LH:` records, summed over files               | 331,417 | 321,311 |    10,106 | 96.9507 |
-| lcov `DA:` records, counted — **what `coverage diff` uses** | 311,968 | 302,979 |     8,989 | 97.1186 |
+| lcov `DA:` records, counted — **what `patchcov diff` uses** | 311,968 | 302,979 |     8,989 | 97.1186 |
 
-(This repository's library suite, 567 files, `cargo-llvm-cov` 0.8.7, rustc 1.98 /
+(A Rust library suite of 567 files, `cargo-llvm-cov` 0.8.7, rustc 1.98 /
 LLVM 22.1.8.) llvm-cov writes `LF`/`LH` from the summary, so even a single lcov
-disagrees with its own `DA` records. `coverage diff` counts the `DA` records — and,
+disagrees with its own `DA` records. `patchcov diff` counts the `DA` records — and,
 for the JSON export, rebuilds lines from `segments` — and never reads `LF`/`LH` or
 the export's `summary`/`totals`, which hold the summary's figure too. The lcov and
 the JSON export of one run give the same gate figure (identical to five decimal
@@ -339,7 +337,7 @@ accounts for the whole gap:
 to the per-line figure, and effect 3 can only raise it (and needs a closure that never
 ran inside a function that did). Effect 1 lowers it when the shared lines are covered
 less often than the rest of the code (94.8% against 97.0% here) and raises it when
-they are covered more often. This repository read higher under `coverage diff`, so a
+they are covered more often. That suite read higher under `patchcov diff`, so a
 threshold carried over from `llvm-cov report --fail-under-lines` was lenient; a
 codebase whose closures and async bodies are better covered than the rest could
 read lower. Measure it rather than assume.
@@ -408,7 +406,7 @@ is also read, since a repeated `mode:` line is accepted).
 
 ```bash
 go test -coverprofile=cover.out ./...
-omni-dev coverage diff --report cover.out
+patchcov diff --report cover.out
 ```
 
 A profile records **blocks**, source ranges written `file:startLine.startCol,endLine.endCol
@@ -451,7 +449,7 @@ each, and everything — the patch gate, `--fail-under-lines`, the deltas, the P
 comment — is computed over the merged result:
 
 ```bash
-omni-dev coverage diff \
+patchcov diff \
   --report shard-1.lcov --report shard-2.lcov --report shard-3.lcov \
   --baseline-report base.lcov \
   --fail-under-patch 80 --fail-under-lines 70
@@ -493,22 +491,22 @@ check applies to it.
   Shards from the same CI runner image do; a mix of, say, Linux and macOS runners
   does not, and the warning above is the signal.
 - `--baseline-report` takes **one** report, so a baseline from a sharded run must
-  be a single file. Make it with [`coverage merge`](#merging-shards-into-one-file).
+  be a single file. Make it with [`patchcov merge`](#merging-shards-into-one-file).
 - The merge-base baseline recompute and `codecov.json` /
   `coverage-summary.txt` come from `cargo llvm-cov` in the reusable action and are
   not part of this command.
 
 ## Merging shards into one file
 
-`coverage diff --report` merges shards on the fly, but a single file is the
+`patchcov diff --report` merges shards on the fly, but a single file is the
 contract in some places: `--baseline-report` takes one report, a baseline publish
-uploads one file, and so does a codecov upload. `coverage merge` writes that file:
+uploads one file, and so does a codecov upload. `patchcov merge` writes that file:
 
 ```bash
-omni-dev coverage merge shard-1.lcov shard-2.lcov shard-3.lcov -o merged.lcov
+patchcov merge shard-1.lcov shard-2.lcov shard-3.lcov -o merged.lcov
 
 # The merged file is an ordinary report, and the baseline a sharded run could not give.
-omni-dev coverage diff --report head.lcov --baseline-report merged.lcov
+patchcov diff --report head.lcov --baseline-report merged.lcov
 ```
 
 - **Same merge, same checks.** The files are unioned and, for a line present in
@@ -516,7 +514,7 @@ omni-dev coverage diff --report head.lcov --baseline-report merged.lcov
   (see [how shards combine](#sharded-runs)). Each input may be lcov, llvm-cov JSON,
   Cobertura, JaCoCo or a Go coverprofile, detected per file; `--report-format` applies to all of them. An
   input that is missing, unparseable or has no executable lines fails the run and
-  names it — **including a lone input**, unlike `coverage diff`, because the output
+  names it — **including a lone input**, unlike `patchcov diff`, because the output
   is trusted by whatever reads it next. An input whose absolute paths all fall
   outside the strip prefix draws a warning on stderr; the file is still written,
   so check stderr when the merged file is published unattended. Both commands
@@ -530,7 +528,7 @@ omni-dev coverage diff --report head.lcov --baseline-report merged.lcov
   for any order of the inputs.
 - **Line coverage only.** The file carries `TN`, `SF`, `DA`, `LF`, `LH` and
   `end_of_record`. Function (`FN*`) and branch (`BRDA`) records are dropped — the
-  model has no place for them — which is fine for `coverage diff` and for a
+  model has no place for them — which is fine for `patchcov diff` and for a
   codecov line view but not for a consumer that wants branches. `LF`/`LH` count the
   `DA` records, so unlike `llvm-cov`'s own lcov the file agrees with itself (see
   [why the total differs](#why-the-total-differs-from-llvm-covs-summary)). A file
@@ -544,7 +542,7 @@ omni-dev coverage diff --report head.lcov --baseline-report merged.lcov
   another root would otherwise key the same file under a second path and never
   union with the others, which is what the shard warning under [Sharded runs](#sharded-runs) is for. Outside a
   repository, and with no `--strip-prefix`, paths are written as the reports have
-  them. A path outside the prefix is normalised as `coverage diff` normalises it
+  them. A path outside the prefix is normalised as `patchcov diff` normalises it
   (a leading `./` or `/` is dropped), so a standard-library path such as
   `/rustc/<hash>/library/…` comes out without its leading `/`. If the repository
   exists but cannot be opened (say, a checkout owned by another user), the merge
@@ -553,11 +551,11 @@ omni-dev coverage diff --report head.lcov --baseline-report merged.lcov
   the file is replaced through a temporary file and a rename, through a symlink
   if the path is one and keeping an existing file's mode: a merge that fails
   creates nothing and leaves an existing file as it was, and `-o` may name one of
-  the inputs. `-o` is a **path** here, whereas `coverage diff -o` selects an
+  the inputs. `-o` is a **path** here, whereas `patchcov diff -o` selects an
   output format, so a bare `markdown`, `yaml`, `json` or `lcov` is refused as a
   probable slip (write `./json` for a file of that name).
-- **Not applied: filters.** `--ignore-filename-regex`, `.omni-dev/coverage.yaml`
-  and `ignore` markers are applied by `coverage diff`, to the head and baseline
+- **Not applied: filters.** `--ignore-filename-regex`, `.patchcov/config.yaml`
+  and `ignore` markers are applied by `patchcov diff`, to the head and baseline
   alike, so the merged file stays a complete record.
 
 **Do not join lcov files with `cat`.** It is equivalent to merging for this
@@ -567,7 +565,7 @@ last record onto the next shard's `SF:`. Earlier releases of this command's pars
 silently dropped that file and misattributed the next one's lines (about 0.14 pp
 low on this repository's own test suite), and other lcov consumers may do the same.
 A join has no empty-shard check either: a failed shard just makes the total look
-slightly worse. `coverage merge` has neither problem.
+slightly worse. `patchcov merge` has neither problem.
 
 ## Excluding files (CPU-conditional / non-deterministic coverage)
 
@@ -621,11 +619,11 @@ with no measured lines still passes `--fail-under-patch`.
 
 Because these files are CPU-conditional forever — a property of the
 *repository*, not of a single command line — the ignore-list can be declared once
-in version control under the same `.omni-dev/` directory omni-dev already
-discovers. Create `.omni-dev/coverage.yaml`:
+in version control under a `.patchcov/` directory at the repository root.
+Create `.patchcov/config.yaml`:
 
 ```yaml
-# .omni-dev/coverage.yaml
+# .patchcov/config.yaml
 diff:
   # repo-relative path regexes; same unanchored semantics as
   # --ignore-filename-regex, applied after --strip-prefix normalisation
@@ -635,23 +633,24 @@ diff:
     - 'src/yaml/simd/.*'
 ```
 
-- **Discovery** follows the standard config resolution used by the other
-  commands: `--context-dir <PATH>` wins, else `OMNI_DEV_CONFIG_DIR`, else a
-  walk-up for the nearest `.omni-dev/` from the repo root, plus the usual
-  `local/` override and XDG/home fallbacks.
+- **Discovery** is the same for every command: `--config-dir <PATH>` wins, else
+  `PATCHCOV_CONFIG_DIR`, else the nearest `.patchcov/` found walking up from the
+  repo root (never past the repository boundary). There is no user-level or
+  machine-level file: a setting that changes what a coverage gate reports
+  belongs in version control, where a reviewer can see it.
 - **Union, not replacement.** The config list is set-unioned with any
   `--ignore-filename-regex` passed on the command line, so the flag still works
   and only ever *adds* to the config list.
 - **Empty / missing is a no-op** — behavior is unchanged when the file is absent
-  or its list is empty. A present-but-malformed `coverage.yaml`, or an invalid
+  or its list is empty. A present-but-malformed `config.yaml`, or an invalid
   regex from either source, is a hard error (it fails loudly rather than
   silently letting the excluded noise back in). Unknown keys are ignored, so the
   schema can grow without breaking older binaries.
 
-This is the recommended path when omni-dev runs **through a wrapper** (such as
-the `action-works/omni-dev-coverage-check` action) that does not thread the flag
-through: omni-dev reads `.omni-dev/coverage.yaml` directly from the checkout, so
-no wrapper change is needed.
+This is the recommended path when patchcov runs **through a wrapper** (a CI
+action, a task runner) that does not thread the flag through: patchcov reads
+`.patchcov/config.yaml` directly from the checkout, so no wrapper change is
+needed.
 
 ## Excluding or tolerating regions in source
 
@@ -665,17 +664,17 @@ carry a start line and a mangled symbol, nothing more). So the region is
 delimited **in the source**, with a comment that travels with the code:
 
 ```rust
-// omni-dev: coverage tolerate reason="CPU-gated: the avx512f arm only executes on Zen 4+ runners"
+// patchcov: coverage tolerate reason="CPU-gated: the avx512f arm only executes on Zen 4+ runners"
 fn detect_fast_bmi2() -> bool {
     if is_x86_feature_detected!("avx512f") {
         return true;
     }
     cpuid_amd_zen3_or_later()
 }
-// omni-dev: coverage end
+// patchcov: coverage end
 ```
 
-omni-dev scans **each revision's own source** — head from the working tree, base
+patchcov scans **each revision's own source** — head from the working tree, base
 from the base revision's blob — so no line number is ever recorded, and a region
 that moves, grows, or disappears between base and head is handled by
 construction.
@@ -698,10 +697,10 @@ table; it just cannot manufacture a delta.
 ### Syntax
 
 ```text
-omni-dev: coverage ignore reason="…"     … omni-dev: coverage end
-omni-dev: coverage tolerate reason="…"   … omni-dev: coverage end
-omni-dev: coverage ignore-line reason="…"
-omni-dev: coverage tolerate-line reason="…"
+patchcov: coverage ignore reason="…"     … patchcov: coverage end
+patchcov: coverage tolerate reason="…"   … patchcov: coverage end
+patchcov: coverage ignore-line reason="…"
+patchcov: coverage tolerate-line reason="…"
 ```
 
 - **Matching is a plain substring** anywhere on a line, so any comment syntax
@@ -720,10 +719,10 @@ omni-dev: coverage tolerate-line reason="…"
 ### Check marker syntax locally
 
 ```bash
-omni-dev coverage lint-markers
-omni-dev coverage lint-markers src/bits/popcount.rs
-omni-dev coverage lint-markers -C /path/to/repo src/bits/popcount.rs
-omni-dev coverage lint-markers --include 'src/**/*.py' --include 'scripts/*.sh'
+patchcov lint-markers
+patchcov lint-markers src/bits/popcount.rs
+patchcov lint-markers -C /path/to/repo src/bits/popcount.rs
+patchcov lint-markers --include 'src/**/*.py' --include 'scripts/*.sh'
 ```
 
 With no paths, the command checks every tracked text file in the Git index
@@ -734,15 +733,15 @@ submodules, and so is any file that is not valid UTF-8: binaries are never
 flagged. Explicit paths select only those files, including untracked files, and
 are relative to the repository root unless absolute; a non-UTF-8 file named
 explicitly is skipped too, so a hook can pass every staged path. Malformed
-markers print the same `path:line` diagnostics as `coverage diff` and make the
+markers print the same `path:line` diagnostics as `patchcov diff` and make the
 command exit nonzero. No coverage report or `llvm-cov` run is needed.
 `scripts/build.sh` runs this check after formatting.
 
 To narrow the default scan, pass `--include <GLOB>` (repeatable) or declare the
-same list in `.omni-dev/coverage.yaml`:
+same list in `.patchcov/config.yaml`:
 
 ```yaml
-# .omni-dev/coverage.yaml
+# .patchcov/config.yaml
 lint-markers:
   include:
     - 'src/**/*.py'
@@ -758,17 +757,16 @@ lint-markers:
   can narrow a repo-wide list. With neither, every tracked text file is scanned.
 - **Explicit paths ignore both**: naming a file is a selection, so `--include`
   and the config list apply only to the default scan.
-- Discovery of `coverage.yaml` is the one `coverage diff` uses
-  (`OMNI_DEV_CONFIG_DIR`, else a walk-up for `.omni-dev/`, plus the usual
-  `local/` override and XDG/home fallbacks, so a user-global file applies to a
-  repository that has none of its own). A malformed file is a hard error, but a
+- Discovery of `config.yaml` is the one `patchcov diff` uses
+  (`--config-dir`, else `PATCHCOV_CONFIG_DIR`, else a walk-up for `.patchcov/`).
+  A malformed file is a hard error, but a
   misspelled key is ignored, like every unknown key. A glob that matches no
   tracked file scans nothing and prints a warning.
 
 Before this command scanned every tracked file it checked only `.rs` files. A
 repository that runs it bare, in CI or a hook, may now see errors from files
 that document the marker syntax (this repository's own `docs/` do, so its
-`coverage.yaml` sets `include: ['**/*.rs']`). Restoring the old scope is one
+`config.yaml` sets `include: ['**/*.rs']`). Restoring the old scope is one
 line: `--include '**/*.rs'`, or that glob under `lint-markers.include`.
 
 ### How masking works, precisely
@@ -804,17 +802,31 @@ see what was silenced and why.
 ### Interaction with the file-level ignore-list
 
 File-level exclusion wins. A file excluded by `--ignore-filename-regex` or
-`coverage.yaml` is never read, so markers inside it are never scanned — and never
+`config.yaml` is never read, so markers inside it are never scanned — and never
 report errors.
 
 ## CI usage
 
-In CI, prefer the reusable
-[`action-works/omni-dev-coverage-check`](https://github.com/action-works/omni-dev-coverage-check)
-action, which wraps the cargo-llvm-cov run, the merge-base baseline computation,
-the sticky PR comment, and the line gate around this command. See
-[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) for how this project
-wires it up.
+A pull-request job needs three steps:
+
+1. Measure the head commit and write a report (`head.lcov` above).
+2. Measure the merge base the same way, for project deltas and indirect changes
+   (`base.lcov`). This is optional: patch coverage needs only the head report.
+3. Run `patchcov diff` and post its markdown as the PR comment, failing the job
+   on the gates:
+
+```bash
+patchcov diff \
+  --report head.lcov --baseline-report base.lcov \
+  --base-ref "origin/${GITHUB_BASE_REF}" \
+  --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+  --fail-under-patch 80 > coverage-comment.md
+```
+
+The markdown is written to stdout, and the exit status reflects the gates, so the
+comment can still be posted when a gate fails: capture the status, post the file,
+then exit with it. A sharded run passes one `--report` per shard, or merges them
+first with [`patchcov merge`](#merging-shards-into-one-file).
 
 ## Flag reference
 
@@ -832,13 +844,13 @@ wires it up.
 | `--collapse-ranges` | Collapse consecutive uncovered new lines into ranges |
 | `--all-files` | Report deltas/indirect changes for all files, not just touched ones |
 | `--strip-prefix <PATH>` | Prefix stripped from report paths to make them repo-relative |
-| `--ignore-filename-regex <REGEX>` | Exclude matching files from both reports (repeatable/comma-separated); unioned with `.omni-dev/coverage.yaml` |
-| `--context-dir <PATH>` | Config dir searched for `coverage.yaml` (default: discovered `.omni-dev/`, honoring `OMNI_DEV_CONFIG_DIR`) |
+| `--ignore-filename-regex <REGEX>` | Exclude matching files from both reports (repeatable/comma-separated); unioned with `.patchcov/config.yaml` |
+| `--config-dir <PATH>` | Config dir searched for `config.yaml` (default: discovered `.patchcov/`, honoring `PATCHCOV_CONFIG_DIR`) |
 | `-C, --repo <PATH>` | Operate as if started in `<PATH>` (like `git -C`) |
 | `--artifact-url` / `--run-url` / `--commit-url` | Markdown-footer CI links |
 | `--base-sha` / `--head-sha` | SHAs shown in the markdown `Comparing` line |
 
-`coverage merge` takes:
+`patchcov merge` takes:
 
 | Flag | Purpose |
 |------|---------|

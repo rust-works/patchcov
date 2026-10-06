@@ -1,27 +1,31 @@
-//! Coverage analysis CLI commands.
+//! The `patchcov` command line.
 
 pub(crate) mod diff;
 pub(crate) mod lint_markers;
 pub(crate) mod merge;
 
+use std::path::{Path, PathBuf};
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-/// Coverage analysis: diff/patch coverage for PR comments.
+/// Patch coverage for git diffs.
 #[derive(Parser)]
-pub struct CoverageCommand {
-    /// The coverage subcommand to execute.
+#[command(name = "patchcov", version, about, long_about = None)]
+pub struct Cli {
+    /// The subcommand to execute.
     #[command(subcommand)]
-    pub command: CoverageSubcommands,
+    pub command: Commands,
 
-    /// `-C/--repo`, inherited by every coverage subcommand.
-    #[command(flatten)]
-    pub repo: crate::cli::repo_arg::RepoArg,
+    /// Run as if patchcov was started in `<PATH>` instead of the current
+    /// working directory. Mirrors `git -C`.
+    #[arg(long = "repo", short = 'C', global = true, value_name = "PATH")]
+    pub repo: Option<PathBuf>,
 }
 
-/// Coverage subcommands.
+/// Subcommands.
 #[derive(Subcommand)]
-pub enum CoverageSubcommands {
+pub enum Commands {
     /// Analyses diff/patch coverage from a per-line report and a git diff.
     Diff(Box<diff::DiffCommand>),
     /// Checks source coverage markers without generating a coverage report.
@@ -30,17 +34,17 @@ pub enum CoverageSubcommands {
     Merge(merge::MergeCommand),
 }
 
-impl CoverageCommand {
-    /// Executes the coverage command.
+impl Cli {
+    /// Executes the command.
     ///
     /// `-C/--repo` is resolved here (`None` = current working directory) and
     /// threaded explicitly to the leaf.
     pub fn execute(self) -> Result<()> {
-        let repo = self.repo.path();
+        let repo: Option<&Path> = self.repo.as_deref();
         match self.command {
-            CoverageSubcommands::Diff(cmd) => cmd.execute(repo),
-            CoverageSubcommands::LintMarkers(cmd) => cmd.execute(repo),
-            CoverageSubcommands::Merge(cmd) => cmd.execute(repo),
+            Commands::Diff(cmd) => cmd.execute(repo),
+            Commands::LintMarkers(cmd) => cmd.execute(repo),
+            Commands::Merge(cmd) => cmd.execute(repo),
         }
     }
 }
@@ -50,12 +54,12 @@ impl CoverageCommand {
 mod tests {
     use super::*;
 
-    /// The `coverage` command dispatches to `diff`; a missing report makes the
+    /// The CLI dispatches to `diff`; a missing report makes the
     /// leaf command error, which exercises the dispatch path end-to-end.
     #[test]
     fn dispatches_to_diff() {
-        let cmd = CoverageCommand {
-            command: CoverageSubcommands::Diff(Box::new(diff::DiffCommand {
+        let cmd = Cli {
+            command: Commands::Diff(Box::new(diff::DiffCommand {
                 report: vec![std::path::PathBuf::from("/nonexistent/report.lcov")],
                 report_format: diff::ReportFormat::Auto,
                 base_ref: Some("HEAD".to_string()),
@@ -68,7 +72,7 @@ mod tests {
                 fail_under_lines: None,
                 strip_prefix: None,
                 ignore_filename_regex: Vec::new(),
-                context_dir: None,
+                config_dir: None,
                 collapse_ranges: false,
                 all_files: false,
                 artifact_url: None,
@@ -77,7 +81,7 @@ mod tests {
                 head_sha: None,
                 commit_url: None,
             })),
-            repo: crate::cli::repo_arg::RepoArg::default(),
+            repo: None,
         };
         // Reaches the leaf command and fails on the missing report file.
         assert!(cmd.execute().is_err());
@@ -89,14 +93,14 @@ mod tests {
     fn dispatches_to_merge() {
         let dir = tempfile::tempdir().unwrap();
         let output = dir.path().join("merged.lcov");
-        let cmd = CoverageCommand {
-            command: CoverageSubcommands::Merge(merge::MergeCommand {
+        let cmd = Cli {
+            command: Commands::Merge(merge::MergeCommand {
                 report: vec![dir.path().join("missing.lcov")],
                 report_format: diff::ReportFormat::Auto,
                 output: output.clone(),
                 strip_prefix: None,
             }),
-            repo: crate::cli::repo_arg::RepoArg::default(),
+            repo: None,
         };
         assert!(cmd.execute().is_err());
         assert!(!output.exists());

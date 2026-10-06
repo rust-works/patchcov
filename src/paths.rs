@@ -108,7 +108,7 @@ fn remainder<'a>(path: &'a str, from: &str) -> Option<&'a str> {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::coverage::FileCoverage;
+    use crate::FileCoverage;
 
     fn mapping(from: &str, to: &str) -> PathMapping {
         PathMapping {
