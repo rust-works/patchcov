@@ -1,7 +1,7 @@
 # Non-Rust coverage reports
 
-Small producer reports used by `tests/coverage_diff_test.rs`. The tests create
-real git revisions and run `coverage diff` with explicit mappings, checking both
+Small producer reports used by `tests/diff_test.rs`. The tests create
+real git revisions and run `patchcov diff` with explicit mappings, checking both
 covered and uncovered executable lines. Summary fields are not used as line
 counts. All reports retain their producer's filename spelling.
 
