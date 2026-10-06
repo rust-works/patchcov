@@ -16,10 +16,11 @@ new lines are not, and whether anything moved on code the change did not touch.
 ## Install
 
 ```bash
-cargo install --git https://github.com/rust-works/patchcov
+cargo install patchcov
 ```
 
-It is not yet published to crates.io.
+Prebuilt binaries for Linux (glibc 2.35 or newer) and macOS are attached to each
+[GitHub release](https://github.com/rust-works/patchcov/releases).
 
 ## Use
 
@@ -57,6 +58,10 @@ machine-level settings, so what a gate reports is visible in version control.
 The analysis is a library as well as a command: `patchcov::parse` reads a report,
 `patchcov::DiffModel` builds the added-line sets from `git2`, `patchcov::analyze`
 attributes coverage to the diff and `patchcov::render` formats the result.
+
+## Releasing
+
+See [docs/RELEASE.md](docs/RELEASE.md).
 
 ## License
 
