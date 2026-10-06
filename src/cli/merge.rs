@@ -1,4 +1,4 @@
-//! `omni-dev coverage merge` — one report from the shards of a sharded run.
+//! `patchcov merge` — one report from the shards of a sharded run.
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -8,11 +8,11 @@ use clap::Parser;
 use git2::Repository;
 
 use super::diff::{anchor, read_report, ReportFormat};
-use crate::coverage::merge::check_shard;
-use crate::coverage::render::pct;
-use crate::coverage::{lcov, CoverageReport};
+use crate::merge::check_shard;
+use crate::render::pct;
+use crate::{lcov, CoverageReport};
 
-/// The values `coverage diff -o` accepts, and `lcov` — what a user who mixes the
+/// The values `patchcov diff -o` accepts, and `lcov` — what a user who mixes the
 /// two commands up would type to `merge -o`.
 const OUTPUT_FORMAT_NAMES: [&str; 4] = ["markdown", "yaml", "json", "lcov"];
 
@@ -21,7 +21,7 @@ const MAX_TEMP_ATTEMPTS: u32 = 100;
 
 /// Merges the per-shard coverage reports of a sharded run into one lcov file.
 ///
-/// The result is what `coverage diff` computes from the same shards given as
+/// The result is what `patchcov diff` computes from the same shards given as
 /// repeated `--report`: the union of the files and of each file's executable
 /// lines, taking the larger hit count for a line present in several. It is a
 /// single file, which is what `--baseline-report` and other lcov consumers (a
@@ -52,7 +52,7 @@ pub struct MergeCommand {
 
     /// File to write the merged lcov report to.
     ///
-    /// Unlike `coverage diff -o`, which selects an output *format*, this is a
+    /// Unlike `patchcov diff -o`, which selects an output *format*, this is a
     /// path: a bare `markdown`, `yaml`, `json` or `lcov` is refused as a likely
     /// mistake (write `./json` for a file of that name). The file is replaced
     /// atomically, through a symlink if it is one and keeping its mode: a merge
@@ -108,7 +108,7 @@ impl MergeCommand {
             outcome.files,
             outcome.covered_lines,
             outcome.total_lines,
-            // The same rounding `coverage diff` prints its total with.
+            // The same rounding `patchcov diff` prints its total with.
             pct(outcome.percent),
         );
         Ok(())
@@ -125,13 +125,13 @@ impl MergeCommand {
             !self.report.is_empty(),
             "at least one coverage report is required"
         );
-        // `coverage diff -o` takes a format, so `-o json` is a likely slip, and
+        // `patchcov diff -o` takes a format, so `-o json` is a likely slip, and
         // would otherwise write a file called `json` and exit 0.
         for format in OUTPUT_FORMAT_NAMES {
             if self.output == Path::new(format) {
                 bail!(
                     "-o/--output is the file to write, but `{format}` looks like an output \
-                     format (`coverage diff -o` selects one); to write a file with that name, \
+                     format (`patchcov diff -o` selects one); to write a file with that name, \
                      pass `./{format}`"
                 );
             }
@@ -152,7 +152,7 @@ impl MergeCommand {
         for path in &self.report {
             let path = resolve(path, repo_root);
             let mut report = read_report(&path, self.report_format, root)?;
-            // Unlike `coverage diff`, a lone input is checked too: a merge's
+            // Unlike `patchcov diff`, a lone input is checked too: a merge's
             // output is trusted by whatever reads it next, and nothing else
             // would notice it came from a run that measured nothing.
             check_shard(
@@ -271,12 +271,12 @@ fn write_atomically(path: &Path, contents: &str) -> Result<()> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use crate::cli::coverage::diff::DiffCommand;
+    use crate::cli::diff::DiffCommand;
     use git2::Signature;
     use std::fs;
     use tempfile::TempDir;
 
-    /// A repository whose second commit adds `b.rs`: the shape `coverage diff`
+    /// A repository whose second commit adds `b.rs`: the shape `patchcov diff`
     /// is run against. Returns the dir, git2's canonical workdir (on macOS the
     /// tempdir `/var/...` is a symlink to `/private/var/...`, and the workdir is
     /// what the default strip prefix resolves to), and the base commit.
@@ -377,7 +377,7 @@ mod tests {
     }
 
     /// The first acceptance criterion: the merged file carries the figure
-    /// `coverage diff` computes from the shards themselves.
+    /// `patchcov diff` computes from the shards themselves.
     #[test]
     fn the_merged_file_gives_the_total_diff_computes_from_the_shards() {
         let (_dir, repo, base) = repo_with_added_file();
@@ -705,7 +705,7 @@ mod tests {
             let mut cmd = merge(vec![a.clone(), b.clone()], out.clone());
             cmd.report_format = format;
             cmd.run(Some(&repo)).unwrap();
-            let r = crate::coverage::parse(&fs::read_to_string(out).unwrap(), None).unwrap();
+            let r = crate::parse(&fs::read_to_string(out).unwrap(), None).unwrap();
             assert_eq!(r.hits("b.rs", 1), Some(1));
             assert_eq!(r.hits("b.rs", 2), Some(1));
             assert_eq!(r.hits("b.rs", 3), Some(0));
@@ -785,7 +785,7 @@ mod tests {
     }
 
     /// A merge's output is trusted by whatever reads it next, so unlike
-    /// `coverage diff` a lone empty input is refused as well.
+    /// `patchcov diff` a lone empty input is refused as well.
     #[test]
     fn a_lone_report_with_no_lines_fails() {
         let (_dir, repo, _base) = repo_with_added_file();

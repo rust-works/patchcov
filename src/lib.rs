@@ -15,7 +15,9 @@
 //! 4. [`render::render`] emits markdown / YAML / JSON.
 
 pub mod analysis;
+pub mod cli;
 pub mod cobertura;
+pub mod config;
 pub mod diff;
 pub mod format;
 pub mod go_coverprofile;
@@ -27,6 +29,7 @@ pub mod merge;
 pub mod model;
 pub mod paths;
 pub mod render;
+mod yaml;
 
 pub use analysis::{
     analyze, analyze_with_markers, AppliedMarker, CoverageDiff, DiffScope, ExcludedFiles,

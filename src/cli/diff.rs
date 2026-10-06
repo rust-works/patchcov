@@ -1,4 +1,4 @@
-//! `omni-dev coverage diff` — diff/patch coverage analysis.
+//! `patchcov diff` — diff/patch coverage analysis.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -8,20 +8,20 @@ use clap::{Parser, ValueEnum};
 use git2::Repository;
 use regex::RegexSet;
 
-use crate::claude::context::{load_config_content, resolve_context_dir_at};
-use crate::coverage::analysis::{analyze_with_markers, ExcludedFiles, Markers};
-use crate::coverage::format::resolve as resolve_format;
-use crate::coverage::markers::{self, FileMarkers};
-use crate::coverage::merge::check_shard;
-use crate::coverage::paths::{self, PathMapping};
-use crate::coverage::{
+use crate::analysis::{analyze_with_markers, ExcludedFiles, Markers};
+use crate::config::{load_config_content, resolve_config_dir_at};
+use crate::format::resolve as resolve_format;
+use crate::markers::{self, FileMarkers};
+use crate::merge::check_shard;
+use crate::paths::{self, PathMapping};
+use crate::{
     default_base_ref, go_coverprofile, parse, render, CoverageReport, DiffModel, DiffScope,
     FileCoverage, Format, OutputFormat, RenderOptions,
 };
 
-/// Config file (under the discovered `.omni-dev/` dir) that declares persistent
-/// `coverage diff` settings, unioned with the CLI flags. Missing ⇒ no-op.
-const COVERAGE_CONFIG_FILE: &str = "coverage.yaml";
+/// Config file (under the discovered `.patchcov/` dir) that declares persistent
+/// `patchcov diff` settings, unioned with the CLI flags. Missing ⇒ no-op.
+const COVERAGE_CONFIG_FILE: &str = "config.yaml";
 
 /// Coverage report format selector (CLI mirror of [`Format`] plus auto-detect).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -110,7 +110,7 @@ pub struct DiffCommand {
     /// Optional baseline coverage report; enables project deltas and indirect-change detection.
     ///
     /// Takes one report. A baseline from a sharded run is one file: make it with
-    /// `coverage merge`.
+    /// `patchcov merge`.
     #[arg(long, value_name = "PATH")]
     pub baseline_report: Option<PathBuf>,
 
@@ -160,15 +160,15 @@ pub struct DiffCommand {
     #[arg(long, value_name = "REGEX", value_delimiter = ',')]
     pub ignore_filename_regex: Vec<String>,
 
-    /// Path to the config directory searched for `coverage.yaml` (defaults to
-    /// the discovered `.omni-dev/`, honoring `OMNI_DEV_CONFIG_DIR`).
+    /// Path to the config directory searched for `config.yaml` (defaults to
+    /// the discovered `.patchcov/`, honoring `PATCHCOV_CONFIG_DIR`).
     ///
-    /// `coverage.yaml`'s `diff.ignore-filename-regex` list is unioned with any
+    /// `config.yaml`'s `diff.ignore-filename-regex` list is unioned with any
     /// `--ignore-filename-regex` passed here, so a repo can declare its
     /// CPU-conditional / run-to-run-nondeterministic files once in version
     /// control instead of threading the flag through every invocation.
     #[arg(long, value_name = "PATH")]
-    pub context_dir: Option<PathBuf>,
+    pub config_dir: Option<PathBuf>,
 
     /// Collapse consecutive uncovered new lines into ranges (e.g. `9-11`).
     #[arg(long)]
@@ -344,7 +344,7 @@ fn normalise_report(
     }
 }
 
-/// Persistent `coverage diff` settings read from `.omni-dev/coverage.yaml`.
+/// Persistent `patchcov diff` settings read from `.patchcov/config.yaml`.
 ///
 /// Forward-compatible: unknown top-level keys are ignored, so a newer schema
 /// stays readable by an older binary. A missing `diff` block defaults to empty.
@@ -358,7 +358,7 @@ pub(super) struct CoverageConfig {
     pub(super) lint_markers: CoverageLintMarkersConfig,
 }
 
-/// The `lint-markers:` block of `coverage.yaml`.
+/// The `lint-markers:` block of `config.yaml`.
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub(super) struct CoverageLintMarkersConfig {
@@ -368,7 +368,7 @@ pub(super) struct CoverageLintMarkersConfig {
     pub(super) include: Vec<String>,
 }
 
-/// The `diff:` block of `coverage.yaml`.
+/// The `diff:` block of `config.yaml`.
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 struct CoverageDiffConfig {
@@ -382,25 +382,25 @@ struct CoverageDiffConfig {
     ignore_filename_regex: Vec<String>,
 }
 
-/// Loads and parses `coverage.yaml` from a resolved config directory.
+/// Loads and parses `config.yaml` from a resolved config directory.
 ///
 /// A missing file is the default (empty) config; a present-but-malformed one is
 /// a hard error, so a typo in a *value* fails loudly instead of letting excluded
 /// noise (or a wider lint scan) back in. Shared by every `coverage` subcommand
 /// that reads the file.
-pub(super) fn load_coverage_config(context_dir: &Path) -> Result<CoverageConfig> {
-    let Some(content) = load_config_content(context_dir, COVERAGE_CONFIG_FILE)? else {
+pub(super) fn load_coverage_config(config_dir: &Path) -> Result<CoverageConfig> {
+    let Some(content) = load_config_content(config_dir, COVERAGE_CONFIG_FILE)? else {
         return Ok(CoverageConfig::default());
     };
     serde_yaml::from_str(&content).with_context(|| {
         format!(
             "could not parse coverage config {}/{COVERAGE_CONFIG_FILE}",
-            context_dir.display()
+            config_dir.display()
         )
     })
 }
 
-/// The result of running `coverage diff`, separated from printing so it can be
+/// The result of running `patchcov diff`, separated from printing so it can be
 /// exercised by tests and reused programmatically.
 pub struct DiffOutcome {
     /// The rendered report in the requested format.
@@ -495,8 +495,8 @@ impl DiffCommand {
         // Union the repo-config ignore-list with the CLI flag, then compile once
         // so an invalid pattern is a single up-front error rather than failing
         // separately per report.
-        let context_dir = resolve_context_dir_at(self.context_dir.as_deref(), &repo_path);
-        let config = load_coverage_config(&context_dir)?.diff;
+        let config_dir = resolve_config_dir_at(self.config_dir.as_deref(), &repo_path);
+        let config = load_coverage_config(&config_dir)?.diff;
         paths::validate(&config.path_mappings)?;
         let ignore = self.compile_ignore(&config.ignore_filename_regex)?;
 
@@ -702,7 +702,7 @@ impl DiffCommand {
             return Ok(None);
         }
         let set = RegexSet::new(patterns).context(
-            "invalid ignore-filename-regex pattern (--ignore-filename-regex or coverage.yaml)",
+            "invalid ignore-filename-regex pattern (--ignore-filename-regex or config.yaml)",
         )?;
         Ok(Some(set))
     }
@@ -804,7 +804,7 @@ mod tests {
             fail_under_lines: None,
             strip_prefix: None,
             ignore_filename_regex: Vec::new(),
-            context_dir: None,
+            config_dir: None,
             collapse_ranges: false,
             all_files: false,
             artifact_url: None,
@@ -815,13 +815,13 @@ mod tests {
         }
     }
 
-    /// Writes `<repo>/.omni-dev/coverage.yaml` declaring `diff.ignore-filename-regex`
-    /// and returns the config-dir path to pass as `context_dir`. An empty
+    /// Writes `<repo>/.patchcov/config.yaml` declaring `diff.ignore-filename-regex`
+    /// and returns the config-dir path to pass as `config_dir`. An empty
     /// `patterns` emits an explicit `[]` (a bare `key:` would deserialize as
     /// `null`, not an empty sequence).
     fn write_coverage_config(repo: &Path, patterns: &[&str]) -> PathBuf {
         use std::fmt::Write as _;
-        let config_dir = repo.join(".omni-dev");
+        let config_dir = repo.join(".patchcov");
         fs::create_dir_all(&config_dir).unwrap();
         let mut body = String::from("diff:\n");
         if patterns.is_empty() {
@@ -832,7 +832,7 @@ mod tests {
                 let _ = writeln!(body, "    - '{p}'");
             }
         }
-        fs::write(config_dir.join("coverage.yaml"), body).unwrap();
+        fs::write(config_dir.join("config.yaml"), body).unwrap();
         config_dir
     }
 
@@ -896,12 +896,12 @@ mod tests {
     }
 
     /// Builds a marker line. The introducer is assembled at runtime so this
-    /// file's own fixtures are not themselves markers when omni-dev scans its
-    /// own source — see `crate::coverage::markers::INTRODUCER`.
+    /// file's own fixtures are not themselves markers when patchcov scans its
+    /// own source — see `crate::markers::INTRODUCER`.
     fn marked(kind: &str, reason: &str) -> String {
         format!(
             "// {} {kind} reason=\"{reason}\"",
-            crate::coverage::markers::INTRODUCER
+            crate::markers::INTRODUCER
         )
     }
 
@@ -927,7 +927,7 @@ mod tests {
         let (open, close) = match kind {
             Some(kind) => (
                 marked(kind, "CPU-gated dispatch"),
-                format!("// {} end", crate::coverage::markers::INTRODUCER),
+                format!("// {} end", crate::markers::INTRODUCER),
             ),
             None => (
                 "// an ordinary comment".to_string(),
@@ -1069,7 +1069,7 @@ mod tests {
         // Strip the closing marker from the head worktree, leaving it open.
         let gated = repo.join("src/gated.rs");
         let source = fs::read_to_string(&gated).unwrap();
-        let end = format!("// {} end", crate::coverage::markers::INTRODUCER);
+        let end = format!("// {} end", crate::markers::INTRODUCER);
         fs::write(&gated, source.replace(&end, "// not the end")).unwrap();
 
         let mut cmd = command(head_lcov, &base);
@@ -1233,7 +1233,7 @@ mod tests {
         assert_eq!(cmd.fail_under_patch, None);
     }
 
-    // ── sharded reports (#2114) ──────────────────────────────────────────
+    // ── sharded reports ──────────────────────────────────────────
 
     /// Writes an lcov shard under `repo`: `a.rs` covered at line 1, and `b.rs`
     /// with the given `(line, hits)` records.
@@ -1539,7 +1539,7 @@ mod tests {
 
     #[test]
     fn excluding_the_only_touched_file_is_visible_and_not_an_empty_diff() {
-        // #2167: the diff's one file is excluded. The comment must say so, and
+        // The diff's one file is excluded. The comment must say so, and
         // must not read like a diff that added no code.
         let (_dir, repo, base) = repo_with_added_file();
         let report = write_head_lcov(&repo);
@@ -1754,14 +1754,14 @@ mod tests {
         assert!(cmd.run(Some(&repo)).is_err());
     }
 
-    // ── .omni-dev/coverage.yaml ignore-list (#1398) ──────────────────────
+    // ── .patchcov/config.yaml ignore-list ──────────────────────
 
     #[test]
     fn path_mappings_apply_to_shards_baseline_filters_and_markers() {
         let (_dir, repo, base) = repo_with_added_file();
-        let config_dir = repo.join(".omni-dev");
+        let config_dir = repo.join(".patchcov");
         fs::create_dir(&config_dir).unwrap();
-        fs::write(config_dir.join("coverage.yaml"),
+        fs::write(config_dir.join("config.yaml"),
             "diff:\n  path-mappings:\n    - from: /ci/package\n      to: ''\n    - from: module\n      to: ''\n").unwrap();
         let report = repo.join("head.lcov");
         fs::write(
@@ -1774,7 +1774,7 @@ mod tests {
         let baseline = repo.join("base.lcov");
         fs::write(&baseline, "SF:module/a.rs\nDA:1,1\nend_of_record\n").unwrap();
         let mut cmd = command(report, &base);
-        cmd.context_dir = Some(config_dir);
+        cmd.config_dir = Some(config_dir);
         cmd.report.push(shard);
         cmd.baseline_report = Some(baseline);
         let outcome = cmd.run(Some(&repo)).unwrap();
@@ -1800,7 +1800,7 @@ mod tests {
         // A malformed marker proves the mapped path is used to read source.
         fs::write(
             repo.join("b.rs"),
-            format!("// {} coverage ignore-line\none\n", "omni-dev:"),
+            format!("// {} coverage ignore-line\none\n", "patchcov:"),
         )
         .unwrap();
         let error = cmd.run(Some(&repo)).err().unwrap().to_string();
@@ -1810,15 +1810,15 @@ mod tests {
     #[test]
     fn invalid_path_mapping_config_fails_before_report_loading() {
         let (_dir, repo, base) = repo_with_added_file();
-        let dir = repo.join(".omni-dev");
+        let dir = repo.join(".patchcov");
         fs::create_dir(&dir).unwrap();
         fs::write(
-            dir.join("coverage.yaml"),
+            dir.join("config.yaml"),
             "diff:\n  path-mappings:\n    - from: src\n      to: ../outside\n",
         )
         .unwrap();
         let mut cmd = command(repo.join("missing.lcov"), &base);
-        cmd.context_dir = Some(dir);
+        cmd.config_dir = Some(dir);
         assert!(cmd
             .run(Some(&repo))
             .err()
@@ -1871,7 +1871,7 @@ mod tests {
 
     #[test]
     fn config_ignore_drops_file_from_both_reports() {
-        // Acceptance criterion: a file matched ONLY via `.omni-dev/coverage.yaml`
+        // Acceptance criterion: a file matched ONLY via `.patchcov/config.yaml`
         // is excluded from BOTH head and baseline, so it cannot surface in the
         // delta table nor the "unchanged files also moved" note. Config-only
         // analogue of `ignore_filename_regex_drops_file_from_both_reports`.
@@ -1898,7 +1898,7 @@ mod tests {
         let mut cmd = command(report, &base);
         cmd.baseline_report = Some(baseline);
         cmd.all_files = true;
-        cmd.context_dir = Some(config_dir);
+        cmd.config_dir = Some(config_dir);
         let md = cmd.run(Some(&repo)).unwrap().rendered;
         assert!(
             !md.contains("`a.rs`"),
@@ -1935,7 +1935,7 @@ mod tests {
         let mut cmd = command(report, &base);
         cmd.baseline_report = Some(baseline);
         cmd.all_files = true;
-        cmd.context_dir = Some(config_dir);
+        cmd.config_dir = Some(config_dir);
         cmd.ignore_filename_regex = vec![r"b\.rs".to_string()];
         let outcome = cmd.run(Some(&repo)).unwrap();
         // `b.rs` (the only added file) dropped via the CLI flag ⇒ no patch lines.
@@ -1952,7 +1952,7 @@ mod tests {
         let report = write_head_lcov(&repo);
         let config_dir = write_coverage_config(&repo, &[]);
         let mut cmd = command(report, &base);
-        cmd.context_dir = Some(config_dir);
+        cmd.config_dir = Some(config_dir);
         let outcome = cmd.run(Some(&repo)).unwrap();
         assert_eq!(outcome.patch_percent, Some(2.0 / 3.0 * 100.0));
         assert!(outcome.rendered.contains("`b.rs:2`"));
@@ -1960,13 +1960,13 @@ mod tests {
 
     #[test]
     fn missing_config_is_noop() {
-        // A context dir with no `coverage.yaml` leaves behavior unchanged.
+        // A config dir with no `config.yaml` leaves behavior unchanged.
         let (_dir, repo, base) = repo_with_added_file();
         let report = write_head_lcov(&repo);
-        let empty_dir = repo.join(".omni-dev-empty");
+        let empty_dir = repo.join(".patchcov-empty");
         fs::create_dir_all(&empty_dir).unwrap();
         let mut cmd = command(report, &base);
-        cmd.context_dir = Some(empty_dir);
+        cmd.config_dir = Some(empty_dir);
         let outcome = cmd.run(Some(&repo)).unwrap();
         assert_eq!(outcome.patch_percent, Some(2.0 / 3.0 * 100.0));
         assert!(outcome.rendered.contains("`b.rs:2`"));
@@ -1974,20 +1974,20 @@ mod tests {
 
     #[test]
     fn malformed_config_errors() {
-        // A present-but-malformed `coverage.yaml` (scalar where a list is
+        // A present-but-malformed `config.yaml` (scalar where a list is
         // expected) is a hard error — fail loudly rather than silently letting
         // the excluded noise back in.
         let (_dir, repo, base) = repo_with_added_file();
         let report = write_head_lcov(&repo);
-        let config_dir = repo.join(".omni-dev");
+        let config_dir = repo.join(".patchcov");
         fs::create_dir_all(&config_dir).unwrap();
         fs::write(
-            config_dir.join("coverage.yaml"),
+            config_dir.join("config.yaml"),
             "diff:\n  ignore-filename-regex: 'not-a-list'\n",
         )
         .unwrap();
         let mut cmd = command(report, &base);
-        cmd.context_dir = Some(config_dir);
+        cmd.config_dir = Some(config_dir);
         assert!(cmd.run(Some(&repo)).is_err());
     }
 
@@ -1998,7 +1998,7 @@ mod tests {
         let report = write_head_lcov(&repo);
         let config_dir = write_coverage_config(&repo, &["(unclosed"]);
         let mut cmd = command(report, &base);
-        cmd.context_dir = Some(config_dir);
+        cmd.config_dir = Some(config_dir);
         assert!(cmd.run(Some(&repo)).is_err());
     }
 

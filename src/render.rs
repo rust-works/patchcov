@@ -1,24 +1,48 @@
 //! Rendering of a [`CoverageDiff`] to markdown, YAML, or JSON.
 //!
-//! The markdown renderer reproduces the PR comment that the retired
-//! `scripts/coverage-comment.sh` shell renderer produced — same `## Coverage`
-//! header, total line with 🟢/🔴 direction, merge-base→head `Comparing` line, the
-//! EPS-filtered per-file before/after/Δ table, and the artifact footer — plus a
-//! `### Patch coverage` section (the headline metric the aggregate comment could
-//! never show) and an indirect-changes section. CI renders this comment via
-//! `omni-dev coverage diff --format markdown` (see `.github/workflows/ci.yml`).
+//! The markdown renderer produces the PR comment: a `## Coverage` header, the
+//! total line with 🟢/🔴 direction, the merge-base→head `Comparing` line, the
+//! EPS-filtered per-file before/after/Δ table and the artifact footer, plus a
+//! `### Patch coverage` section (the headline metric an aggregate comment could
+//! never show) and an indirect-changes section. CI renders it via
+//! `patchcov diff --output markdown`.
 
 use anyhow::Result;
 use serde::Serialize;
 
 use super::analysis::CoverageDiff;
-use crate::data::{FieldDocumentation, FieldExplanation};
+use crate::yaml::to_yaml;
+
+/// The `explanation` block of structured output: what each field means and
+/// whether it is populated in this serialization, so a reader (or an AI agent)
+/// of one YAML or JSON document needs no other reference.
+#[derive(Debug, Clone, Serialize)]
+struct FieldExplanation {
+    /// Descriptive text explaining the overall structure.
+    text: String,
+    /// Documentation for individual fields in the output.
+    fields: Vec<FieldDocumentation>,
+}
+
+/// One entry of [`FieldExplanation::fields`].
+#[derive(Debug, Clone, Serialize)]
+struct FieldDocumentation {
+    /// Path of the documented field, e.g. `patch_coverage.files[].path`.
+    name: String,
+    /// What the field contains.
+    text: String,
+    /// A command that produces the underlying data, when there is one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    command: Option<String>,
+    /// Whether the field is present in the current output.
+    present: bool,
+}
 
 /// Minimum per-file change (percentage points) for a row to be listed, matching
 /// the original coverage comment (suppresses floating-point noise).
 const EPS: f64 = 0.05;
 
-/// Output serialisation for `coverage diff`.
+/// Output serialisation for `patchcov diff`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputFormat {
     /// Markdown PR comment (default).
@@ -53,7 +77,7 @@ pub fn render(diff: &CoverageDiff, opts: &RenderOptions, format: OutputFormat) -
         OutputFormat::Yaml => {
             let mut view = CoverageDiffView::build(diff, opts);
             view.update_field_presence();
-            crate::data::yaml::to_yaml(&view)
+            to_yaml(&view)
         }
         OutputFormat::Json => {
             let mut view = CoverageDiffView::build(diff, opts);
@@ -112,7 +136,7 @@ fn arrow(d: f64) -> &'static str {
 /// Direction emoji for the *headline* total delta.
 ///
 /// The per-file sections have suppressed cross-run measurement variance since
-/// #973 — delta-table rows need `|d| >= EPS`, and an untouched file needs a net
+/// the first release — delta-table rows need `|d| >= EPS`, and an untouched file needs a net
 /// move of `NOTABLE_UNCHANGED_LINES` covered lines — but the headline had no
 /// equivalent gate, so every flip those sections hid still accumulated here and
 /// was painted red. Applying the same `EPS` tolerance keeps the comment
@@ -339,12 +363,11 @@ fn render_markers(diff: &CoverageDiff, out: &mut String) {
     if diff.markers.is_empty() {
         return;
     }
-    let count =
-        |kind: crate::coverage::MarkerKind| diff.markers.iter().filter(|m| m.kind == kind).count();
+    let count = |kind: crate::MarkerKind| diff.markers.iter().filter(|m| m.kind == kind).count();
     out.push_str(&format!(
         "<details><summary>🔇 {} ignored region(s), {} tolerated region(s)</summary>\n\n",
-        count(crate::coverage::MarkerKind::Ignore),
-        count(crate::coverage::MarkerKind::Tolerate)
+        count(crate::MarkerKind::Ignore),
+        count(crate::MarkerKind::Tolerate)
     ));
     out.push_str(
         "`ignore` removes the lines from both reports; `tolerate` keeps them in the reported \
@@ -665,7 +688,7 @@ impl CoverageDiffView {
             .collect();
 
         let (project_delta, indirect_changes) = if diff.has_baseline {
-            let file_delta_view = |fd: &crate::coverage::analysis::FileDelta| FileDeltaView {
+            let file_delta_view = |fd: &crate::analysis::FileDelta| FileDeltaView {
                 path: fd.path.clone(),
                 before: fd.before.map(round2),
                 after: fd.after.map(round2),
@@ -821,7 +844,7 @@ fn explanation() -> FieldExplanation {
             ),
             field(
                 "excluded_files.paths[]",
-                "Files `--ignore-filename-regex` (or `coverage.yaml`) removed from the head or \
+                "Files `--ignore-filename-regex` (or `config.yaml`) removed from the head or \
                  baseline report. `touched` is the subset this diff changed, and \
                  `new_executable_lines` counts the executable lines it added to them, so an \
                  empty `patch_coverage` caused by the filter can be told from a diff that added \
@@ -835,7 +858,7 @@ fn explanation() -> FieldExplanation {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use crate::coverage::analysis::{
+    use crate::analysis::{
         AppliedMarker, ExcludedFiles, FileDelta, FilePatch, IndirectChange, MarkerSide,
         PatchCoverage,
     };
@@ -914,7 +937,7 @@ mod tests {
         assert!(md.contains("`src/b.rs:5`"));
     }
 
-    /// #1591: the arrow must agree with the number printed beside it. A delta
+    /// The arrow must agree with the number printed beside it. A delta
     /// inside the rounding interval prints `0 pp`, so it must be neutral rather
     /// than raising a red alarm next to a number that says nothing moved.
     #[test]
@@ -952,7 +975,7 @@ mod tests {
         );
     }
 
-    /// #1592: the #2444 shape — a docs-only PR whose headline moved because one
+    /// A docs-only PR whose headline moved because one
     /// CPU-conditional function flipped between two runner CPUs, while every
     /// per-file section of the same comment reported nothing.
     #[test]
@@ -1013,7 +1036,7 @@ mod tests {
     fn tolerated_marker() -> AppliedMarker {
         AppliedMarker {
             path: "src/util/simd/x86.rs".to_string(),
-            kind: crate::coverage::MarkerKind::Tolerate,
+            kind: crate::MarkerKind::Tolerate,
             side: MarkerSide::Both,
             start: 41,
             end: 52,
@@ -1021,7 +1044,7 @@ mod tests {
         }
     }
 
-    /// #1593, the motivating case: the headline shows the *real* percentage but
+    /// The motivating case: the headline shows the *real* percentage but
     /// takes its movement from the masked one, so the reported number stays
     /// truthful while the silenced flip stops moving the needle.
     #[test]
@@ -1053,7 +1076,7 @@ mod tests {
             tolerated_marker(),
             AppliedMarker {
                 path: "src/generated.rs".to_string(),
-                kind: crate::coverage::MarkerKind::Ignore,
+                kind: crate::MarkerKind::Ignore,
                 side: MarkerSide::Head,
                 start: 7,
                 end: 7,
@@ -1207,8 +1230,8 @@ mod tests {
     }
 
     fn excluded(touched_paths: &[&str], other_paths: &[&str], added: &[u32]) -> ExcludedFiles {
-        use crate::coverage::diff::{DiffModel, FileDiff};
-        use crate::coverage::model::FileCoverage;
+        use crate::diff::{DiffModel, FileDiff};
+        use crate::model::FileCoverage;
         let mut e = ExcludedFiles::default();
         let mut diff = DiffModel::default();
         for path in touched_paths.iter().chain(other_paths) {

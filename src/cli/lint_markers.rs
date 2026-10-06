@@ -8,8 +8,8 @@ use git2::Repository;
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 
 use super::diff::load_coverage_config;
-use crate::claude::context::resolve_context_dir_at;
-use crate::coverage::markers;
+use crate::config::resolve_config_dir_at;
+use crate::markers;
 
 /// Index modes of a regular file. A symlink (`0o120000`) or a gitlink
 /// (`0o160000`, a submodule — a directory in the worktree) is not source text.
@@ -28,7 +28,7 @@ pub struct LintMarkersCommand {
     ///
     /// Matched against the repo-relative, `/`-separated path: `*` stays within
     /// one path component, `**` crosses directories (`src/**/*.py`). Replaces
-    /// `lint-markers.include` in `.omni-dev/coverage.yaml`. Ignored when PATHs
+    /// `lint-markers.include` in `.patchcov/config.yaml`. Ignored when PATHs
     /// are given, since those are an explicit selection.
     #[arg(long = "include", value_name = "GLOB")]
     pub include: Vec<String>,
@@ -47,7 +47,7 @@ impl LintMarkersCommand {
             let (patterns, origin) = if self.include.is_empty() {
                 (
                     load_config_include(root)?,
-                    "lint-markers.include in coverage.yaml",
+                    "lint-markers.include in config.yaml",
                 )
             } else {
                 (self.include, "--include")
@@ -81,7 +81,7 @@ impl LintMarkersCommand {
             let bytes = std::fs::read(&file)
                 .with_context(|| format!("could not read {}", file.display()))?;
             // Binary (non-UTF-8) content is never flagged: it can only fail to
-            // find a marker, which is what `coverage diff` assumes of it too.
+            // find a marker, which is what `patchcov diff` assumes of it too.
             let Ok(source) = String::from_utf8(bytes) else {
                 continue;
             };
@@ -98,16 +98,15 @@ impl LintMarkersCommand {
     }
 }
 
-/// Loads `lint-markers.include` from the discovered `.omni-dev/coverage.yaml`.
+/// Loads `lint-markers.include` from the discovered `.patchcov/config.yaml`.
 ///
-/// Discovery is the one `coverage diff` uses without `--context-dir`:
-/// `OMNI_DEV_CONFIG_DIR`, else a walk-up from the repository root, plus the
-/// usual local-override and XDG/home fallbacks. A missing file is no
+/// Discovery is the one `patchcov diff` uses without `--config-dir`:
+/// `PATCHCOV_CONFIG_DIR`, else a walk-up from the repository root. A missing file is no
 /// restriction; a malformed one is a hard error (a misspelled *key* is ignored,
 /// as everywhere in this file, so the schema can grow).
 fn load_config_include(repo_root: &Path) -> Result<Vec<String>> {
-    let context_dir = resolve_context_dir_at(None, repo_root);
-    Ok(load_coverage_config(&context_dir)?.lint_markers.include)
+    let config_dir = resolve_config_dir_at(None, repo_root);
+    Ok(load_coverage_config(&config_dir)?.lint_markers.include)
 }
 
 /// Compiles include globs into a set, or `None` when there are none (no

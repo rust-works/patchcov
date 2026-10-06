@@ -15,7 +15,7 @@ use anyhow::Result;
 use git2::{Repository, Signature};
 use tempfile::TempDir;
 
-use omni_dev::coverage::{analyze, CoverageReport, DiffModel, DiffScope, FileCoverage};
+use patchcov::{analyze, CoverageReport, DiffModel, DiffScope, FileCoverage};
 
 /// A temporary git repo whose commits each define the full file set (files
 /// omitted from a commit are removed), so renames and deletions work.
@@ -213,32 +213,32 @@ fn producer_fixture(
     total: u64,
 ) -> Result<()> {
     use clap::Parser;
-    use omni_dev::cli::coverage::{CoverageCommand, CoverageSubcommands};
+    use patchcov::cli::{Cli, Commands};
 
     let mut repo = TestRepo::new()?;
     repo.commit("base", &[("base.txt", "base\n")])?;
     let source = "line\n".repeat(40);
     repo.commit("add source", &[("base.txt", "base\n"), (git_path, &source)])?;
-    let config = repo.repo_path.join(".omni-dev");
+    let config = repo.repo_path.join(".patchcov");
     fs::create_dir(&config)?;
-    fs::write(config.join("coverage.yaml"), "{}\n")?;
+    fs::write(config.join("config.yaml"), "{}\n")?;
     let report = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/coverage/non-rust")
+        .join("tests/fixtures/non-rust")
         .join(fixture);
     let base = repo.base_sha();
-    let command = CoverageCommand::try_parse_from([
-        "coverage",
+    let command = Cli::try_parse_from([
+        "patchcov",
         "diff",
         "--report",
         report.to_str().unwrap(),
         "--base-ref",
         &base,
-        "--context-dir",
+        "--config-dir",
         config.to_str().unwrap(),
         "-o",
         "json",
     ])?;
-    let CoverageSubcommands::Diff(cmd) = command.command else {
+    let Commands::Diff(cmd) = command.command else {
         unreachable!("parsed a diff command")
     };
     // Overall coverage can exist while a path mismatch leaves the patch empty.
@@ -248,7 +248,7 @@ fn producer_fixture(
         "{fixture}"
     );
     fs::write(
-        config.join("coverage.yaml"),
+        config.join("config.yaml"),
         format!("diff:\n  path-mappings:\n    - from: '{from}'\n      to: '{to}'\n"),
     )?;
     let result = cmd.run(Some(&repo.repo_path))?;
@@ -322,7 +322,7 @@ fn dart_runner_root_patch_attribution() -> Result<()> {
 
 #[test]
 fn jacoco_source_root_mapping_attributes_patch() -> Result<()> {
-    use omni_dev::coverage::paths::PathMapping;
+    use patchcov::paths::PathMapping;
     let mut repo = TestRepo::new()?;
     repo.commit("base", &[("base.txt", "base\n")])?;
     repo.commit(
@@ -332,7 +332,7 @@ fn jacoco_source_root_mapping_attributes_patch() -> Result<()> {
             "one\ntwo\n",
         )],
     )?;
-    let mut head = omni_dev::coverage::parse(
+    let mut head = patchcov::parse(
         r#"<report name="app"><package name="com/example"><sourcefile name="App.java"><line nr="1" mi="0" ci="2"/><line nr="2" mi="1" ci="0"/></sourcefile></package></report>"#,
         None,
     )?;

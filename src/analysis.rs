@@ -341,7 +341,7 @@ pub struct CoverageDiff {
     /// this lists only files the diff touched.
     pub file_deltas: Vec<FileDelta>,
     /// Files the diff did *not* touch whose coverage nonetheless moved by at
-    /// least [`NOTABLE_UNCHANGED_LINES`] covered lines (requires a baseline; only
+    /// least `NOTABLE_UNCHANGED_LINES` covered lines (requires a baseline; only
     /// populated under [`DiffScope::DiffOnly`]). These are flagged separately as
     /// not attributable to the PR, so a real cross-file regression still shows
     /// while small measurement-noise flips stay hidden.
@@ -732,7 +732,7 @@ fn indirect_changes(
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use crate::coverage::model::FileCoverage;
+    use crate::model::FileCoverage;
     use std::collections::{BTreeMap, BTreeSet};
 
     fn file_with_lines(path: &str, lines: &[u32]) -> FileCoverage {
@@ -1045,7 +1045,7 @@ mod tests {
 mod marker_tests {
     use super::tests::*;
     use super::*;
-    use crate::coverage::markers::Region;
+    use crate::markers::Region;
 
     /// Builds head-side markers tolerating `lines` of `path`.
     fn tolerate(path: &str, lines: &[u32]) -> Markers {

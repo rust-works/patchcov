@@ -297,7 +297,7 @@ mod tests {
     /// elided, and the absolute path is replaced by `/repo`.
     ///
     /// Two things in it make llvm-cov's own summary disagree with the per-line
-    /// records (#2131):
+    /// records:
     ///
     /// - the closure `|b| b + 1` is a function record of its own that *also*
     ///   maps line 10, which `wrap` maps too, so the summary counts line 10
@@ -350,7 +350,7 @@ end_of_record";
 "totals":{"lines":{"count":14,"covered":13,"percent":92.85714285714286}}}],
 "type":"llvm.coverage.json.export","version":"3.1.0"}"#;
 
-    /// `coverage diff`'s total is the per-line view — distinct lines — and not
+    /// `patchcov diff`'s total is the per-line view — distinct lines — and not
     /// the figure `llvm-cov report` prints. The lcov carries that figure too, in
     /// `LF`/`LH`, so reading those instead of counting `DA` records would move
     /// every `--fail-under-lines` gate; this pins that it does not.
@@ -378,8 +378,8 @@ end_of_record";
 
     /// An lcov written from the per-line view carries the same total on the way
     /// back in, and its `LF`/`LH` agree with its `DA` records — where the real
-    /// output above disagrees with itself. This is what lets `coverage merge`
-    /// promise the total `coverage diff` computes (#2118).
+    /// output above disagrees with itself. This is what lets `patchcov merge`
+    /// promise the total `patchcov diff` computes.
     #[test]
     fn written_lcov_keeps_the_per_line_total() {
         let report = parse(LLVM_COV_GAP_LCOV, Some(Format::Lcov)).unwrap();
