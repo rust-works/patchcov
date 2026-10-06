@@ -1,0 +1,16 @@
+# release-plz configuration. See https://release-plz.dev/docs/config
+#
+# The release flow is documented in docs/RELEASE.md.
+
+[workspace]
+# Open a release PR (version bump + changelog) from the conventional commits
+# since the last tag, and publish when it is merged.
+changelog_update = true
+git_tag_enable = true
+git_release_enable = true
+publish = true
+
+# Fail the release PR if a breaking public-API change is not matched by a
+# major (or, below 1.0, minor) version bump. patchcov is a library as well as a
+# command, so its API is a contract.
+semver_check = true
