@@ -34,7 +34,7 @@ everywhere.
 |------|---------|
 | `--report <PATH>` | Head coverage report (**required**); repeat once per shard to merge a [sharded run](usage.md#sharded-runs) |
 | `--report-format <FMT>` | Format of every `--report`: `auto` (default) \| `lcov` \| `llvm-cov-json` \| `cobertura` \| `jacoco` \| `go-coverprofile` |
-| `--base-ref <REV>` | Base revision (default: merge base of `origin/main`, else `main`, and `HEAD`). An explicit revision is compared directly with the head, **not** via a merge base; see [choosing the base](usage.md#choosing-the-base) |
+| `--base-ref <REV>` | Base revision (default: merge base of the [default branch](usage.md#choosing-the-base) and `HEAD`). An explicit revision is compared directly with the head, **not** via a merge base; see [choosing the base](usage.md#choosing-the-base) |
 | `--head-ref <REV>` | Head revision the report was measured at (default: `HEAD`) |
 | `--baseline-report <PATH>` | Base-side report; enables project deltas and indirect changes. Takes one report |
 | `--baseline-report-format <FMT>` | Format of `--baseline-report` (auto-detected by default); same values as `--report-format` |
@@ -89,7 +89,7 @@ itself, on stdout, is still printed when a *gate* fails, so a CI job can post it
 | `1` | A **report is unreadable, empty or unparseable** (`diff`, `merge`) | `could not read coverage report ./missing.lcov: No such file or directory`<br>`could not parse coverage report ./empty.lcov: coverage report format auto-detection failed: coverage report is empty; cannot detect format`<br>`coverage shard <path> has no executable lines` (several `--report`, or any `merge` input) |
 | `1` | A **source marker is malformed** (`lint-markers`, and `diff` for files in the report) | ``src/m.rs:1: `patchcov: coverage ignore` needs a reason (write ...)``<br>`coverage marker lint failed` |
 | `1` | **Config is bad** | `could not parse coverage config ./.patchcov/config.yaml: ...` (malformed YAML, wrong type, a misspelled `path-mappings` field)<br>`invalid ignore-filename-regex pattern`<br>`invalid glob ... in --fail-on-unmeasured / diff.require-measured` |
-| `1` | **Git cannot answer** | `could not open git repository at ...`<br>`could not resolve base ref ...`<br>``could not resolve `origin/main` or `main` for the default base ref``<br>`could not compute merge-base of base branch and HEAD` |
+| `1` | **Git cannot answer** | `could not open git repository at ...`<br>`could not resolve base ref ...`<br>``could not resolve a default base ref (tried `refs/remotes/origin/HEAD`, `origin/main`, `main`, `origin/master`, `master`); pass --base-ref``<br>``could not compute merge-base of `<ref>` and HEAD`` |
 | `2` | **Usage error**, reported by the argument parser before anything runs | `the following required arguments were not provided: --report <PATH>`<br>`invalid value 'abc' for '--fail-under-patch <PCT>'`<br>`unrecognized subcommand` |
 
 Gate failures and every other runtime error share code `1`, so a script that needs to know

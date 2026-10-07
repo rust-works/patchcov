@@ -231,8 +231,23 @@ impl DiffModel {
     }
 }
 
-/// Resolves the default base ref: the merge-base of `origin/main` (falling back
-/// to `main`) and `HEAD`, returned as a hex SHA.
+/// Refs tried, in order, to find the default base branch. The first that resolves
+/// to a commit wins: the remote's declared default branch, then the conventional
+/// names.
+const DEFAULT_BASE_CANDIDATES: [&str; 5] = [
+    "refs/remotes/origin/HEAD",
+    "origin/main",
+    "main",
+    "origin/master",
+    "master",
+];
+
+/// Resolves the default base ref: the merge-base of the default branch and `HEAD`,
+/// returned as a hex SHA.
+///
+/// The default branch is the first of these that resolves:
+/// `refs/remotes/origin/HEAD` (what `git clone` records), `origin/main`, `main`,
+/// `origin/master`, `master`.
 pub fn default_base_ref(repo: &Repository) -> Result<String> {
     let head = repo
         .head()
@@ -240,16 +255,23 @@ pub fn default_base_ref(repo: &Repository) -> Result<String> {
         .peel_to_commit()
         .context("HEAD is not a commit")?
         .id();
-    let main = repo
-        .revparse_single("origin/main")
-        .or_else(|_| repo.revparse_single("main"))
-        .context("could not resolve `origin/main` or `main` for the default base ref")?
-        .peel_to_commit()
-        .context("base branch is not a commit")?
-        .id();
+    let (name, branch) = DEFAULT_BASE_CANDIDATES
+        .iter()
+        .find_map(|name| {
+            let commit = repo.revparse_single(name).ok()?.peel_to_commit().ok()?;
+            Some((name, commit.id()))
+        })
+        .with_context(|| {
+            format!(
+                "could not resolve a default base ref (tried {}); pass --base-ref",
+                DEFAULT_BASE_CANDIDATES
+                    .map(|name| format!("`{name}`"))
+                    .join(", ")
+            )
+        })?;
     let base = repo
-        .merge_base(main, head)
-        .context("could not compute merge-base of base branch and HEAD")?;
+        .merge_base(branch, head)
+        .with_context(|| format!("could not compute merge-base of `{name}` and HEAD"))?;
     Ok(base.to_string())
 }
 
@@ -370,6 +392,114 @@ mod tests {
 
         let base = default_base_ref(&repo).unwrap();
         assert_eq!(base, first.to_string());
+    }
+
+    /// Builds a repo with a first commit, then advances `HEAD` one commit past it,
+    /// returning the repo and the first commit's id. `HEAD` is on `trunk`, so no
+    /// default-base candidate exists until a test creates one.
+    fn repo_with_branch_point(dir: &std::path::Path) -> (Repository, git2::Oid) {
+        let mut opts = git2::RepositoryInitOptions::new();
+        opts.initial_head("trunk");
+        let repo = Repository::init_opts(dir, &opts).unwrap();
+        let first = commit(&repo, dir, &[("a.rs", "1\n")], None);
+        commit(&repo, dir, &[("a.rs", "1\n2\n")], Some(first));
+        (repo, first)
+    }
+
+    /// Points `reference` (e.g. `refs/remotes/origin/develop`) at `target`.
+    fn set_ref(repo: &Repository, reference: &str, target: git2::Oid) {
+        repo.reference(reference, target, true, "test").unwrap();
+    }
+
+    #[test]
+    fn default_base_ref_falls_back_to_master() {
+        let dir = tempfile::tempdir().unwrap();
+        let (repo, first) = repo_with_branch_point(dir.path());
+        repo.branch("master", &repo.find_commit(first).unwrap(), false)
+            .unwrap();
+        assert_eq!(default_base_ref(&repo).unwrap(), first.to_string());
+    }
+
+    #[test]
+    fn default_base_ref_follows_origin_head_to_a_non_main_branch() {
+        let dir = tempfile::tempdir().unwrap();
+        let (repo, first) = repo_with_branch_point(dir.path());
+        set_ref(&repo, "refs/remotes/origin/develop", first);
+        repo.reference_symbolic(
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/develop",
+            true,
+            "test",
+        )
+        .unwrap();
+        assert_eq!(default_base_ref(&repo).unwrap(), first.to_string());
+    }
+
+    #[test]
+    fn default_base_ref_prefers_origin_head_over_main() {
+        let dir = tempfile::tempdir().unwrap();
+        let (repo, first) = repo_with_branch_point(dir.path());
+        let head = repo.head().unwrap().peel_to_commit().unwrap().id();
+        // `main` is at HEAD (merge base would be HEAD); origin/HEAD is at `first`.
+        set_ref(&repo, "refs/heads/main", head);
+        set_ref(&repo, "refs/remotes/origin/develop", first);
+        repo.reference_symbolic(
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/develop",
+            true,
+            "test",
+        )
+        .unwrap();
+        assert_eq!(default_base_ref(&repo).unwrap(), first.to_string());
+    }
+
+    #[test]
+    fn default_base_ref_skips_a_dangling_origin_head() {
+        let dir = tempfile::tempdir().unwrap();
+        let (repo, first) = repo_with_branch_point(dir.path());
+        repo.branch("main", &repo.find_commit(first).unwrap(), false)
+            .unwrap();
+        // origin/HEAD names a branch that was never fetched.
+        repo.reference_symbolic(
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/gone",
+            true,
+            "test",
+        )
+        .unwrap();
+        assert_eq!(default_base_ref(&repo).unwrap(), first.to_string());
+    }
+
+    #[test]
+    fn default_base_ref_prefers_main_names_over_master_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let (repo, first) = repo_with_branch_point(dir.path());
+        let head = repo.head().unwrap().peel_to_commit().unwrap().id();
+        // Every lower-priority ref sits at HEAD, so picking one would give HEAD.
+        set_ref(&repo, "refs/remotes/origin/master", head);
+        set_ref(&repo, "refs/heads/master", head);
+        set_ref(&repo, "refs/heads/main", head);
+        set_ref(&repo, "refs/remotes/origin/main", first);
+        assert_eq!(default_base_ref(&repo).unwrap(), first.to_string());
+
+        // Without origin/main, local `main` still beats origin/master.
+        repo.find_reference("refs/remotes/origin/main")
+            .unwrap()
+            .delete()
+            .unwrap();
+        set_ref(&repo, "refs/heads/main", first);
+        assert_eq!(default_base_ref(&repo).unwrap(), first.to_string());
+    }
+
+    #[test]
+    fn default_base_ref_error_names_every_ref_tried() {
+        let dir = tempfile::tempdir().unwrap();
+        let (repo, _) = repo_with_branch_point(dir.path());
+        let message = format!("{:#}", default_base_ref(&repo).unwrap_err());
+        for name in DEFAULT_BASE_CANDIDATES {
+            assert!(message.contains(&format!("`{name}`")), "{message}");
+        }
+        assert!(message.contains("--base-ref"), "{message}");
     }
 
     #[test]

@@ -202,7 +202,7 @@ compromised release; they are not a signature.
 cargo llvm-cov --no-report
 cargo llvm-cov report --lcov --output-path head.lcov
 
-# Patch coverage against the merge base with origin/main.
+# Patch coverage against the merge base with the default branch (origin/HEAD, else main or master).
 patchcov diff --report head.lcov
 
 # Fail the job if patch coverage is under 80% or overall coverage under 70%.
@@ -313,7 +313,7 @@ fn main() -> anyhow::Result<()> {
         head.strip_prefix(workdir);
     }
 
-    // The lines added since the merge base of `origin/main` and HEAD, which is what
+    // The lines added since the merge base of the default branch and HEAD, which is what
     // `patchcov diff` uses by default. An explicit revision is compared directly.
     let base = default_base_ref(&repo)?;
     let diff = DiffModel::between(&repo, &base, None)?;
