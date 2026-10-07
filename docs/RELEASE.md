@@ -36,6 +36,14 @@ on `merge_group`, and are not required queue checks.
 Each archive contains the executable, LICENSE and README.md. The Windows job
 extracts its ZIP and runs `patchcov.exe --version` before uploading it.
 
+The archive names (`patchcov-vX.Y.Z-<target>.tar.gz` or `.zip`) and the
+`patchcov-vX.Y.Z-<target>/` directory inside them are also a contract with
+`cargo binstall`: `[package.metadata.binstall]` in `Cargo.toml` spells out that layout.
+Change one and you must change the other; `tests/binstall_test.rs` fails when they drift. The metadata is read from the published
+crate, so a fix only reaches users with the next release; until then (and for older
+cargo-binstall versions that do not guess these names) `cargo binstall patchcov` may
+fall back to building from source.
+
 The Linux jobs fail if the binary needs a glibc symbol newer than the floor
 (`GLIBC_FLOOR` in the workflow), so a runner-image change is a failed release build
 rather than a silent one. Always build on a pinned image, never `ubuntu-latest`.

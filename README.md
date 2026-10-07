@@ -160,9 +160,19 @@ checksums. Linux and macOS builds use `.tar.gz` archives; Windows builds use
 directory containing `patchcov.exe` to your `PATH`. The binaries are not signed or
 notarized, so macOS quarantines a downloaded one; `cargo install` avoids that.
 
-`cargo binstall` is not set up for this crate: the release archives do not follow
-cargo-binstall's default naming, and the crate has no binstall metadata, so `cargo binstall
-patchcov` would build from source. Use `cargo install patchcov` or a release archive.
+To install a prebuilt binary without downloading an archive by hand, use
+[cargo-binstall](https://github.com/cargo-bins/cargo-binstall):
+
+```bash
+cargo binstall patchcov
+```
+
+It fetches the release archive for your platform and falls back to building from source on
+any other. Recent cargo-binstall releases (1.25 was tested) already find these archives by
+guessing their names; the crate's `[package.metadata.binstall]` states the layout, so the
+lookup no longer depends on that guess. Because cargo-binstall reads that metadata from the
+published crate, it applies from the first release after 0.2.0. cargo-binstall downloads
+with its own client, so the macOS quarantine caveat above does not apply.
 
 ### Verify a download
 
