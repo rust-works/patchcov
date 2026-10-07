@@ -39,7 +39,7 @@ extracts its ZIP and runs `patchcov.exe --version` before uploading it.
 The archive names (`patchcov-vX.Y.Z-<target>.tar.gz` or `.zip`) and the
 `patchcov-vX.Y.Z-<target>/` directory inside them are also a contract with
 `cargo binstall`: `[package.metadata.binstall]` in `Cargo.toml` spells out that layout.
-Change one and you must change the other. The metadata is read from the published
+Change one and you must change the other; `tests/binstall_test.rs` fails when they drift. The metadata is read from the published
 crate, so a fix only reaches users with the next release; until then (and for older
 cargo-binstall versions that do not guess these names) `cargo binstall patchcov` may
 fall back to building from source.
