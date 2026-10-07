@@ -58,7 +58,7 @@ everywhere.
 The five footer and link flags fall back to environment variables; see
 [Environment variables](#environment-variables). `--format` is a hidden, deprecated alias
 of `-o/--output` that prints a warning. `--fail-on-path-mismatch` is a hidden, deprecated no-op
-(it is now the default) that prints a warning; it conflicts with `--allow-path-mismatch`.
+(failing is now the default) that prints a warning; `--allow-path-mismatch` still wins over it.
 
 ## `patchcov merge` flags
 

@@ -479,7 +479,7 @@ fn foreign_runner_paths_fail_by_default_and_can_be_allowed() -> Result<()> {
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr)?;
     assert!(
-        stderr.contains("--fail-on-path-mismatch is deprecated"),
+        stderr.contains("--fail-on-path-mismatch is deprecated and has no effect"),
         "{stderr}"
     );
     assert!(stderr.contains("none of its"), "{stderr}");

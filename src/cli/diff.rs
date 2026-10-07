@@ -168,8 +168,9 @@ pub struct DiffCommand {
     #[arg(long)]
     pub allow_path_mismatch: bool,
 
-    /// Deprecated: a path mismatch is now an error by default.
-    #[arg(long, hide = true, conflicts_with = "allow_path_mismatch")]
+    /// Deprecated and ignored: a path mismatch is an error by default, unless
+    /// --allow-path-mismatch or diff.allow-path-mismatch says otherwise.
+    #[arg(long, hide = true)]
     pub fail_on_path_mismatch: bool,
 
     /// Override the path prefix stripped from report file paths to make them
@@ -556,7 +557,7 @@ impl DiffCommand {
         }
         if self.fail_on_path_mismatch {
             eprintln!(
-                "warning: --fail-on-path-mismatch is deprecated; a path mismatch is now an error by default (use --allow-path-mismatch to warn instead)"
+                "warning: --fail-on-path-mismatch is deprecated and has no effect; a path mismatch is an error unless --allow-path-mismatch or diff.allow-path-mismatch is set"
             );
         }
         let outcome = self.run(repo)?;
@@ -2489,10 +2490,17 @@ mod tests {
     }
 
     #[test]
-    fn deprecated_fail_on_path_mismatch_is_accepted() {
+    fn deprecated_fail_on_path_mismatch_is_accepted_and_ignored() {
         let (_dir, repo, base) = repo_with_added_file();
         let mut cmd = command(write_head_lcov(&repo), &base);
         cmd.fail_on_path_mismatch = true;
+        assert!(cmd.run(Some(&repo)).is_ok());
+        // It cannot re-strengthen a mismatch the caller allowed.
+        let bad = repo.join("bad.lcov");
+        fs::write(&bad, "SF:wrong/b.rs\nDA:1,1\nend_of_record\n").unwrap();
+        cmd.report = vec![bad];
+        assert!(cmd.run(Some(&repo)).is_err());
+        cmd.allow_path_mismatch = true;
         assert!(cmd.execute(Some(&repo)).is_ok());
     }
 
