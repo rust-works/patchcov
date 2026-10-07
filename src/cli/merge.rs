@@ -3,11 +3,12 @@
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{Context, Result};
 use clap::Parser;
 use git2::Repository;
 
 use super::diff::{anchor, read_report, ReportFormat};
+use super::exit::{Classify, ExitKind};
 use crate::merge::check_shard;
 use crate::render::pct;
 use crate::{lcov, CoverageReport};
@@ -121,19 +122,18 @@ impl MergeCommand {
     /// defaults to `.`). Every input is read and checked before the output is
     /// touched, so a failed merge writes nothing.
     pub fn run(&self, repo_root: Option<&Path>) -> Result<MergeOutcome> {
-        ensure!(
-            !self.report.is_empty(),
-            "at least one coverage report is required"
-        );
+        if self.report.is_empty() {
+            return Err(ExitKind::Usage.error("at least one coverage report is required"));
+        }
         // `patchcov diff -o` takes a format, so `-o json` is a likely slip, and
         // would otherwise write a file called `json` and exit 0.
         for format in OUTPUT_FORMAT_NAMES {
             if self.output == Path::new(format) {
-                bail!(
+                return Err(ExitKind::Usage.error(format!(
                     "-o/--output is the file to write, but `{format}` looks like an output \
                      format (`patchcov diff -o` selects one); to write a file with that name, \
                      pass `./{format}`"
-                );
+                )));
             }
         }
         let prefix = match &self.strip_prefix {
@@ -160,16 +160,17 @@ impl MergeCommand {
                 &report,
                 prefix.as_deref(),
                 &mut warnings,
-            )?;
+            )
+            .classify(ExitKind::Report)?;
             if let Some(prefix) = prefix.as_deref() {
                 report.strip_prefix(prefix);
             }
             merged.merge(report);
         }
 
-        let text = lcov::write(&merged)?;
+        let text = lcov::write(&merged).classify(ExitKind::Other)?;
         let output = resolve(&self.output, repo_root);
-        write_atomically(&output, &text)?;
+        write_atomically(&output, &text).classify(ExitKind::Other)?;
 
         Ok(MergeOutcome {
             output,
@@ -200,12 +201,14 @@ fn repo_workdir(root: &Path) -> Result<Option<PathBuf>> {
     match Repository::discover(root) {
         Ok(repo) => Ok(repo.workdir().map(Path::to_path_buf)),
         Err(error) if error.code() == git2::ErrorCode::NotFound => Ok(None),
-        Err(error) => Err(error).with_context(|| {
-            format!(
-                "could not open the git repository at {}; pass --strip-prefix to merge without it",
-                root.display()
-            )
-        }),
+        Err(error) => Err(error)
+            .with_context(|| {
+                format!(
+                    "could not open the git repository at {}; pass --strip-prefix to merge without it",
+                    root.display()
+                )
+            })
+            .classify(ExitKind::Git),
     }
 }
 

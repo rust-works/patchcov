@@ -9,6 +9,7 @@ use git2::Repository;
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use regex::RegexSet;
 
+use super::exit::{Classify, ExitKind};
 use crate::analysis::{analyze_with_markers, ExcludedFiles, Markers};
 use crate::config::{load_config_content, resolve_config_dir_at};
 use crate::format::resolve as resolve_format;
@@ -271,9 +272,11 @@ impl<'repo> RevisionSource<'repo> {
         };
         let tree = repo
             .revparse_single(rev)
-            .with_context(|| format!("could not resolve ref `{rev}` to scan for coverage markers"))?
+            .with_context(|| format!("could not resolve ref `{rev}` to scan for coverage markers"))
+            .classify(ExitKind::Git)?
             .peel_to_tree()
-            .with_context(|| format!("ref `{rev}` is not a tree-ish"))?;
+            .with_context(|| format!("ref `{rev}` is not a tree-ish"))
+            .classify(ExitKind::Git)?;
         Ok(Self::Tree(repo, tree))
     }
 
@@ -288,15 +291,21 @@ impl<'repo> RevisionSource<'repo> {
                 Err(e) => Err(anyhow::Error::new(e).context(format!(
                     "could not read {} to scan for coverage markers",
                     workdir.join(path).display()
-                ))),
+                )))
+                .classify(ExitKind::Other),
             },
             Self::Tree(repo, tree) => {
                 let Ok(entry) = tree.get_path(Path::new(path)) else {
                     return Ok(None);
                 };
-                let object = entry.to_object(repo).with_context(|| {
-                    format!("could not read `{path}` from the tree to scan for coverage markers")
-                })?;
+                let object = entry
+                    .to_object(repo)
+                    .with_context(|| {
+                        format!(
+                            "could not read `{path}` from the tree to scan for coverage markers"
+                        )
+                    })
+                    .classify(ExitKind::Git)?;
                 let Some(blob) = object.as_blob() else {
                     return Ok(None);
                 };
@@ -351,23 +360,28 @@ fn read_report_mode(
     branch_coverage: bool,
 ) -> Result<CoverageReport> {
     let content = std::fs::read_to_string(path)
-        .with_context(|| format!("could not read coverage report {}", path.display()))?;
+        .with_context(|| format!("could not read coverage report {}", path.display()))
+        .classify(ExitKind::Report)?;
     let resolved = resolve_format(&content, format.into_format())
-        .with_context(|| format!("could not parse coverage report {}", path.display()))?;
+        .with_context(|| format!("could not parse coverage report {}", path.display()))
+        .classify(ExitKind::Report)?;
     let parsed = if branch_coverage {
         match resolved {
             Format::Lcov => crate::lcov::parse_with_branches(&content),
             Format::Cobertura => crate::cobertura::parse_with_branches(&content),
-            _ => anyhow::bail!(
-                "--branch-coverage supports only lcov and Cobertura reports: {}",
-                path.display()
-            ),
+            _ => {
+                return Err(ExitKind::Usage.error(format!(
+                    "--branch-coverage supports only lcov and Cobertura reports: {}",
+                    path.display()
+                )))
+            }
         }
     } else {
         parse(&content, Some(resolved))
     };
-    let mut report =
-        parsed.with_context(|| format!("could not parse coverage report {}", path.display()))?;
+    let mut report = parsed
+        .with_context(|| format!("could not parse coverage report {}", path.display()))
+        .classify(ExitKind::Report)?;
     if resolved == Format::GoCoverprofile {
         if let Some(module) = std::fs::read_to_string(repo_root.join("go.mod"))
             .ok()
@@ -395,7 +409,7 @@ impl ReportPathCheck<'_> {
         }
         let matches = match self.revision {
             Revision::Head(None) if self.repo.workdir().is_some() => {
-                let index = self.repo.index()?;
+                let index = self.repo.index().classify(ExitKind::Git)?;
                 // get_path panics on Windows prefixes and other invalid repo
                 // paths. Compare stored git paths directly: unmatched report
                 // paths are diagnostic input, not paths safe for that API.
@@ -409,7 +423,11 @@ impl ReportPathCheck<'_> {
                     Revision::Head(rev) => rev.unwrap_or("HEAD"),
                     Revision::Base(rev) => rev,
                 };
-                let tree = self.repo.revparse_single(rev)?.peel_to_tree()?;
+                let tree = self
+                    .repo
+                    .revparse_single(rev)
+                    .and_then(|object| object.peel_to_tree())
+                    .classify(ExitKind::Git)?;
                 report.files.keys().any(|path| {
                     tree.get_path(Path::new(path))
                         .is_ok_and(|entry| entry.kind() == Some(git2::ObjectType::Blob))
@@ -428,10 +446,11 @@ impl ReportPathCheck<'_> {
                 "coverage report {}: none of its {} file path(s) matches a tracked file in the repository; unmatched normalized paths: {sample}; use --strip-prefix or diff.path-mappings to make paths repo-relative",
                 label.display(), report.files.len()
             );
-            anyhow::ensure!(
-                !self.strict,
-                "{message} (or pass --allow-path-mismatch / set diff.allow-path-mismatch to warn instead)"
-            );
+            if self.strict {
+                return Err(ExitKind::PathMismatch.error(format!(
+                    "{message} (or pass --allow-path-mismatch / set diff.allow-path-mismatch to warn instead)"
+                )));
+            }
             self.warnings.push(message);
         }
         Ok(())
@@ -511,15 +530,19 @@ struct CoverageDiffConfig {
 /// noise (or a wider lint scan) back in. Shared by every `coverage` subcommand
 /// that reads the file.
 pub(super) fn load_coverage_config(config_dir: &Path) -> Result<CoverageConfig> {
-    let Some(content) = load_config_content(config_dir, COVERAGE_CONFIG_FILE)? else {
+    let Some(content) =
+        load_config_content(config_dir, COVERAGE_CONFIG_FILE).classify(ExitKind::Config)?
+    else {
         return Ok(CoverageConfig::default());
     };
-    serde_yaml::from_str(&content).with_context(|| {
-        format!(
-            "could not parse coverage config {}/{COVERAGE_CONFIG_FILE}",
-            config_dir.display()
-        )
-    })
+    serde_yaml::from_str(&content)
+        .with_context(|| {
+            format!(
+                "could not parse coverage config {}/{COVERAGE_CONFIG_FILE}",
+                config_dir.display()
+            )
+        })
+        .classify(ExitKind::Config)
 }
 
 /// The result of running `patchcov diff`, separated from printing so it can be
@@ -567,7 +590,7 @@ impl DiffCommand {
         println!("{}", outcome.rendered);
         let failures = self.gate_failures(&outcome);
         if !failures.is_empty() {
-            anyhow::bail!(failures.join("; "));
+            return Err(ExitKind::Gate.error(failures.join("; ")));
         }
         Ok(())
     }
@@ -610,12 +633,13 @@ impl DiffCommand {
     pub fn run(&self, repo_root: Option<&Path>) -> Result<DiffOutcome> {
         let repo_path = repo_root.map_or_else(|| PathBuf::from("."), Path::to_path_buf);
         let repo = Repository::open(&repo_path)
-            .with_context(|| format!("could not open git repository at {}", repo_path.display()))?;
+            .with_context(|| format!("could not open git repository at {}", repo_path.display()))
+            .classify(ExitKind::Git)?;
 
         // Resolve the base ref (default: merge-base of the default branch and HEAD).
         let base_ref = match &self.base_ref {
             Some(r) => r.clone(),
-            None => default_base_ref(&repo)?,
+            None => default_base_ref(&repo).classify(ExitKind::Git)?,
         };
 
         // Determine the prefix stripped from report paths to make them repo-relative.
@@ -629,7 +653,7 @@ impl DiffCommand {
         // separately per report.
         let config_dir = resolve_config_dir_at(self.config_dir.as_deref(), &repo_path);
         let config = load_coverage_config(&config_dir)?.diff;
-        paths::validate(&config.path_mappings)?;
+        paths::validate(&config.path_mappings).classify(ExitKind::Config)?;
         let ignore = self.compile_ignore(&config.ignore_filename_regex)?;
 
         let require_measured = self.compile_require_measured(&config.require_measured)?;
@@ -662,7 +686,8 @@ impl DiffCommand {
             None => None,
         };
 
-        let diff = DiffModel::between(&repo, &base_ref, self.head_ref.as_deref())?;
+        let diff = DiffModel::between(&repo, &base_ref, self.head_ref.as_deref())
+            .classify(ExitKind::Git)?;
         // Preserve report presence before source markers can remove every line.
         let unmeasured_files = crate::analysis::unmeasured_files(&head, &diff, baseline.as_ref())
             .into_iter()
@@ -726,7 +751,7 @@ impl DiffCommand {
         result.unmeasured_files = unmeasured_files;
 
         let opts = self.render_options();
-        let rendered = render(&result, &opts, self.output.into())?;
+        let rendered = render(&result, &opts, self.output.into()).classify(ExitKind::Other)?;
 
         let patch_percent = result.patch.percent();
         let below_gate = match self.fail_under_patch {
@@ -768,19 +793,19 @@ impl DiffCommand {
         check: &mut ReportPathCheck<'_>,
         excluded: &mut ExcludedFiles,
     ) -> Result<CoverageReport> {
-        anyhow::ensure!(
-            !self.report.is_empty(),
-            "at least one coverage report is required"
-        );
+        if self.report.is_empty() {
+            return Err(ExitKind::Usage.error("at least one coverage report is required"));
+        }
         let sharded = self.report.len() > 1;
         let mut merged = CoverageReport::new();
         for path in &self.report {
             let path = anchor(path, check.root);
             let mut report =
                 read_report_mode(&path, self.report_format, check.root, self.branch_coverage)?;
-            report.map_paths(mappings)?;
+            report.map_paths(mappings).classify(ExitKind::Config)?;
             if sharded {
-                require_executable_lines(&path.display().to_string(), &report)?;
+                require_executable_lines(&path.display().to_string(), &report)
+                    .classify(ExitKind::Report)?;
             }
             excluded.record_head(normalise_report(
                 &mut report,
@@ -816,7 +841,7 @@ impl DiffCommand {
             check.root,
             self.branch_coverage,
         )?;
-        report.map_paths(mappings)?;
+        report.map_paths(mappings).classify(ExitKind::Config)?;
         excluded.record_baseline(normalise_report(
             &mut report,
             strip_prefix,
@@ -850,7 +875,7 @@ impl DiffCommand {
             let Some(text) = source.read(path)? else {
                 continue;
             };
-            let regions = markers::scan(path, &text)?;
+            let regions = markers::scan(path, &text).classify(ExitKind::Marker)?;
             if !regions.is_empty() {
                 found.insert(path.clone(), FileMarkers::new(regions));
             }
@@ -878,9 +903,11 @@ impl DiffCommand {
         if patterns.is_empty() {
             return Ok(None);
         }
-        let set = RegexSet::new(patterns).context(
-            "invalid ignore-filename-regex pattern (--ignore-filename-regex or config.yaml)",
-        )?;
+        let set = RegexSet::new(patterns)
+            .context(
+                "invalid ignore-filename-regex pattern (--ignore-filename-regex or config.yaml)",
+            )
+            .classify(ExitKind::Config)?;
         Ok(Some(set))
     }
 
@@ -891,17 +918,19 @@ impl DiffCommand {
             return Ok(None);
         }
         for pattern in self.fail_on_unmeasured.iter().chain(config) {
-            anyhow::ensure!(
-                !pattern.is_empty(),
-                "empty glob in --fail-on-unmeasured / diff.require-measured"
-            );
+            if pattern.is_empty() {
+                return Err(ExitKind::Config
+                    .error("empty glob in --fail-on-unmeasured / diff.require-measured"));
+            }
             builder.add(GlobBuilder::new(pattern).literal_separator(true).build()
-                .with_context(|| format!("invalid glob `{pattern}` in --fail-on-unmeasured / diff.require-measured"))?);
+                .with_context(|| format!("invalid glob `{pattern}` in --fail-on-unmeasured / diff.require-measured"))
+                .classify(ExitKind::Config)?);
         }
         Ok(Some(
             builder
                 .build()
-                .context("could not compile require-measured globs")?,
+                .context("could not compile require-measured globs")
+                .classify(ExitKind::Config)?,
         ))
     }
 

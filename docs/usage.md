@@ -399,8 +399,9 @@ coverage across the whole head report is below `<PCT>` percent. It gates on the 
 `Total` the markdown headline prints, so it moves with the `--ignore-filename-regex` list
 and `ignore` markers, exactly as the patch gate does. Both gates can be set together, and
 every gate that fails is named in the error. The report is still printed to stdout when a
-gate fails, so a CI job can post the comment and then fail. All exit codes are in the
-[reference](reference.md#exit-codes).
+gate fails, so a CI job can post the comment and then fail. A failed gate exits `1`;
+other failures have their own codes, so a script can tell them apart. All exit codes are
+in the [reference](reference.md#exit-codes).
 
 - **The figure is per-line, not llvm-cov's summary.** It is covered lines over the
   distinct executable lines in the report's per-line records (an lcov's `DA:` records, or
@@ -838,8 +839,11 @@ patchcov diff \
   --fail-under-patch 80 > coverage-comment.md
 ```
 
-The markdown is written to stdout, and the exit status reflects the gates, so the comment can
-still be posted when a gate fails: capture the status, post the file, then exit with it. A
+The markdown is written to stdout, and exit status `1` means a gate failed, so the comment can
+still be posted then: capture the status, post the file if it is `0` or `1`, then exit with
+it. Any other non-zero status (`2` to `8`, see the
+[exit codes](reference.md#exit-codes)) means no report was produced, so there is nothing to
+post. A
 sharded run passes one `--report` per shard, or merges them first with
 [`patchcov merge`](#merging-shards-into-one-file). The merge base has to resolve, so check
 out with full history (`fetch-depth: 0`); see

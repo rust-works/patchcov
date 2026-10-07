@@ -1,10 +1,15 @@
 //! The `patchcov` command-line entry point.
 
+use std::process::ExitCode;
+
 use clap::Parser;
 
-fn main() {
-    if let Err(err) = patchcov::cli::Cli::parse().execute() {
-        eprintln!("Error: {err:#}");
-        std::process::exit(1);
+fn main() -> ExitCode {
+    match patchcov::cli::Cli::parse().execute() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("Error: {err:#}");
+            ExitCode::from(patchcov::cli::exit::code(&err))
+        }
     }
 }
