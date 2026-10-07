@@ -43,6 +43,24 @@ rather than a silent one. Always build on a pinned image, never `ubuntu-latest`.
 The binaries are unsigned and not notarized, so macOS Gatekeeper quarantines a
 downloaded one; `cargo install patchcov` avoids that.
 
+### Writing a useful changelog
+
+release-plz builds each release's changelog section from the commit subjects on `main`,
+grouped by conventional-commit type: `feat` under *Added*, `fix` under *Fixed*, and the rest
+(`docs:`, `chore:`, and commits with no type) under *Other*, as the 0.2.0 section shows. The
+subject you write on the branch is therefore the only text a user sees, so write it for them.
+Before you select **Merge when ready** on a release PR, read its changelog section the way a
+user would:
+
+- Rewrite a vague or purely internal subject, or drop an entry that means nothing outside the
+  repository.
+- Commit anything users will notice as `feat:` or `fix:`, so it does not land in *Other*.
+- Describe what changed for the user, not how it was implemented.
+
+Do not hand-edit the generated section of `CHANGELOG.md` on `main` outside a release PR, and
+leave released sections alone except to correct a factual error: release-plz owns the file
+and a hand-written entry would be duplicated by the commit-generated one.
+
 ## One-time setup
 
 These need a repository admin and cannot be done from a workflow.

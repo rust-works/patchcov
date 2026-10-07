@@ -1,8 +1,73 @@
 # Contributing
 
-Open pull requests against `main` and use conventional commit messages (`feat:`,
-`fix:`, `docs:`, etc.). Keep those messages on the branch: the merge queue uses
-merge commits, preserving them for release-plz.
+Open pull requests against `main` and use conventional commit messages (`feat:`, `fix:`,
+`docs:`, etc.). Keep those messages on the branch: the merge queue uses merge commits,
+preserving them for release-plz.
+
+## Getting oriented
+
+patchcov is a library with a thin command-line layer. The architecture overview is the crate
+documentation at the top of [`src/lib.rs`](src/lib.rs): a report is parsed into a per-line
+model, a git diff is turned into added-line sets, the two are joined, and the result is
+rendered. Read it first, then:
+
+| To change | Look in |
+|-----------|---------|
+| A report format | `src/lcov.rs`, `src/llvm_json.rs`, `src/cobertura.rs`, `src/jacoco.rs`, `src/go_coverprofile.rs`; detection in `src/format.rs` |
+| How coverage is attributed to a diff | `src/diff.rs` (git side) and `src/analysis.rs` |
+| The markdown, YAML or JSON output | `src/render.rs` |
+| Flags and the order of the pipeline | `src/cli/diff.rs`, `src/cli/merge.rs`, `src/cli/lint_markers.rs` |
+| Source markers | `src/markers.rs` |
+| Path mappings and `.patchcov/config.yaml` | `src/paths.rs`, `src/config.rs` |
+
+The user-facing docs live in [`README.md`](README.md) and [`docs/`](docs/): `usage.md` for tasks,
+`reference.md` for flags, config, schema and exit codes, `explanation.md` for rationale and
+`troubleshooting.md`. A change to a flag, a config key, the output schema or an exit code
+should update `docs/reference.md` in the same pull request.
+
+## Running the tests
+
+```bash
+cargo test --all-targets          # unit and integration tests (not doctests)
+cargo test --doc                  # the crate-level example in src/lib.rs is a doctest
+cargo test <name>                 # one test, by substring
+cargo test --test diff_test       # one integration test file
+```
+
+Unit tests sit beside the code in `#[cfg(test)]` modules. The integration tests in
+[`tests/`](tests/) build a temporary git repository per test, commit a base and a head
+revision, and run the real analysis (`tests/diff_test.rs`) or the real binary
+(`tests/lint_markers_test.rs`). They need no network.
+
+To measure patchcov's own coverage, which is a good way to check a change is tested:
+
+```bash
+cargo llvm-cov --no-report
+cargo llvm-cov report --lcov --output-path head.lcov
+patchcov diff --report head.lcov --fail-under-patch 100   # or target/debug/patchcov
+```
+
+## Adding a fixture
+
+Fixtures are real or hand-written coverage reports under
+[`tests/fixtures/`](tests/fixtures/). The non-Rust producer reports in
+`tests/fixtures/non-rust/` are used by `producer_fixture` in `tests/diff_test.rs`, which
+commits a source file at the path git would have, runs `patchcov diff` on the fixture without
+a mapping (expecting an empty patch), then with the `path-mappings` entry you give it
+(expecting the covered and total line counts).
+
+To add one:
+
+1. Generate the report with the real tool and keep it unedited where you can. Put it in
+   `tests/fixtures/non-rust/`, and record the tool and version, the exact command, the source
+   it measured and the number of executable and covered lines in
+   [`tests/fixtures/non-rust/README.md`](tests/fixtures/non-rust/README.md), as the existing
+   entries do. Say so if a file was trimmed, copied from upstream (with its licence) or
+   written by hand.
+2. Add a test that calls `producer_fixture(fixture, git_path, from, to, covered, total)`
+   with the mapping the fixture needs.
+3. `.gitignore` excludes `*.lcov` except under `tests/fixtures/`, so an lcov fixture there is
+   committed without further steps.
 
 ## Local checks
 
@@ -16,8 +81,13 @@ cargo +1.88.0 check --all-targets
 RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --document-private-items
 ```
 
-Install the MSRV toolchain with `rustup toolchain install 1.88.0 --profile minimal`
-if needed. CI also runs tests on Linux, macOS, and Windows.
+Install the MSRV toolchain with `rustup toolchain install 1.88.0 --profile minimal` if needed.
+CI also runs tests on Linux, macOS, and Windows.
+
+If you changed documentation, also run `patchcov lint-markers` (this repository's
+[`.patchcov/config.yaml`](.patchcov/config.yaml) limits it to Rust sources, so prose that
+describes the marker syntax is not flagged) and check that relative links and `#anchors` in
+`README.md`, `CONTRIBUTING.md` and `docs/` still resolve.
 
 ## Merging
 
