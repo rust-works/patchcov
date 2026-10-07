@@ -73,6 +73,18 @@ data, in the shape described in the [output schema](docs/reference.md#output-sch
 Both are the output of [`docs/examples/sample.sh`](docs/examples/sample.sh), which builds a
 tiny git repository and runs the command, so you can reproduce them.
 
+## Mission
+
+> Help projects that use agentic workflows keep their new code properly tested, with
+> minimal friction: a precise, machine-readable answer to "what did this change leave
+> uncovered, and where?", in a gate that depends on nothing but your own CI. The result
+> should not need a human to interpret it: an agent or a CI step can act on the exit code
+> and the `file:line` list, and loop until the gate passes.
+
+The aim is adequately tested new code, found and fixed quickly, not a coverage number for
+its own sake: patchcov measures that lines ran, not that tests assert anything (see the
+end of [When to choose patchcov](#when-to-choose-patchcov)).
+
 ## Why patchcov
 
 patchcov does one job: it tells you, precisely and repeatably, whether a change
@@ -98,9 +110,11 @@ is covered by tests. It is built to be a clear signal, not a dashboard.
   scoping, a tolerance on the headline delta and `tolerate` source markers keep that
   noise from reading as a regression while the reported numbers stay honest.
 - **Fails loudly.** An empty report, a failed shard or a malformed marker is an error,
-  not a quietly lower number. Everything that silences coverage needs a stated
-  reason and is listed in the PR comment, and settings live in `.patchcov/config.yaml`
-  in version control, so a reviewer can see what a gate does and what was excluded.
+  not a quietly lower number. (A report whose paths match no tracked file only warns
+  unless you pass `--fail-on-path-mismatch`.) Everything that silences coverage needs a
+  stated reason and is listed in the PR comment, and settings live in
+  `.patchcov/config.yaml` in version control, so a reviewer can see what a gate does and
+  what was excluded.
 - **One tool across languages.** Five report formats are detected from content, so the
   same command works for Rust, Go, Java and Kotlin, JavaScript and TypeScript,
   Python, C and C++ and more.
@@ -121,7 +135,10 @@ Choose patchcov when:
 Choose something else, or use patchcov alongside it, when you need:
 
 - a hosted dashboard with coverage history, trend graphs or cross-repository views;
-- branch coverage (patchcov reads line coverage only);
+- per-branch coverage. `diff --branch-coverage` scores lcov and Cobertura branches per
+  *line* (`merge` drops branch records), and does not read JaCoCo or llvm-cov JSON
+  branches or report per-branch percentages; see
+  [opt-in branch coverage](docs/usage.md#opt-in-branch-coverage);
 - a broader code-quality platform that covers coverage along with static analysis and
   security scanning.
 
