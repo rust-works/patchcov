@@ -13,7 +13,7 @@ use crate::analysis::{analyze_with_markers, ExcludedFiles, Markers};
 use crate::config::{load_config_content, resolve_config_dir_at};
 use crate::format::resolve as resolve_format;
 use crate::markers::{self, FileMarkers};
-use crate::merge::check_shard;
+use crate::merge::require_executable_lines;
 use crate::paths::{self, PathMapping};
 use crate::{
     default_base_ref, go_coverprofile, parse, render, CoverageReport, DiffModel, DiffScope,
@@ -90,9 +90,9 @@ pub struct DiffCommand {
     /// for a line present in several — so a line any shard covered is covered,
     /// and a line only one shard instrumented is judged by that shard alone.
     /// With more than one `--report`, a shard with no executable lines fails the
-    /// run (it would otherwise lower the result unnoticed), and a shard whose
-    /// absolute paths all fall outside the `--strip-prefix` root draws a
-    /// warning. Shard order does not affect the output.
+    /// run (it would otherwise lower the result unnoticed). Every nonempty
+    /// report with no tracked-file matches after normalization draws a warning
+    /// (or fails with --fail-on-path-mismatch). Shard order does not affect output.
     #[arg(long, value_name = "PATH", required = true)]
     pub report: Vec<PathBuf>,
 
@@ -157,6 +157,11 @@ pub struct DiffCommand {
     /// empty report slip through.
     #[arg(long, value_name = "PCT")]
     pub fail_under_lines: Option<f64>,
+
+    /// Fail when any nonempty head or baseline report has no tracked-file matches.
+    /// By default these reports produce a warning with path normalization hints.
+    #[arg(long)]
+    pub fail_on_path_mismatch: bool,
 
     /// Override the path prefix stripped from report file paths to make them
     /// repo-relative (default: the repository working directory).
@@ -364,22 +369,78 @@ fn read_report_mode(
     Ok(report)
 }
 
+/// Checks normalized paths against tracked files at the report's revision.
+struct ReportPathCheck<'a> {
+    repo: &'a Repository,
+    root: &'a Path,
+    revision: Revision<'a>,
+    strict: bool,
+    warnings: &'a mut Vec<String>,
+}
+
+impl ReportPathCheck<'_> {
+    fn check(&mut self, label: &Path, report: &CoverageReport) -> Result<()> {
+        if report.files.is_empty() {
+            return Ok(());
+        }
+        let matches = match self.revision {
+            Revision::Head(None) if self.repo.workdir().is_some() => {
+                let index = self.repo.index()?;
+                report
+                    .files
+                    .keys()
+                    .any(|path| index.get_path(Path::new(path), 0).is_some())
+            }
+            revision => {
+                let rev = match revision {
+                    Revision::Head(rev) => rev.unwrap_or("HEAD"),
+                    Revision::Base(rev) => rev,
+                };
+                let tree = self.repo.revparse_single(rev)?.peel_to_tree()?;
+                report.files.keys().any(|path| {
+                    tree.get_path(Path::new(path))
+                        .is_ok_and(|entry| entry.kind() == Some(git2::ObjectType::Blob))
+                })
+            }
+        };
+        if !matches {
+            let sample = report
+                .files
+                .keys()
+                .take(3)
+                .map(|p| format!("`{p}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let message = format!(
+                "coverage report {}: none of its {} file path(s) matches a tracked file in the repository; unmatched normalized paths: {sample}; use --strip-prefix or diff.path-mappings to make paths repo-relative",
+                label.display(), report.files.len()
+            );
+            anyhow::ensure!(!self.strict, "{message}");
+            self.warnings.push(message);
+        }
+        Ok(())
+    }
+}
+
 /// Makes `report`'s paths repo-relative, then drops the files `ignore` excludes,
 /// returning the dropped files so the caller can report them.
 fn normalise_report(
     report: &mut CoverageReport,
     strip_prefix: Option<&Path>,
     ignore: Option<&RegexSet>,
-) -> Vec<FileCoverage> {
+    label: &Path,
+    check: &mut ReportPathCheck<'_>,
+) -> Result<Vec<FileCoverage>> {
     if let Some(prefix) = strip_prefix {
         report.strip_prefix(prefix);
     }
+    check.check(label, report)?;
     // Match on the repo-relative path (post strip-prefix), so the same
     // pattern applies identically to head and baseline.
-    match ignore {
+    Ok(match ignore {
         Some(ignore) => report.retain_paths(|path| !ignore.is_match(path)),
         None => Vec::new(),
-    }
+    })
 }
 
 /// Persistent `patchcov diff` settings read from `.patchcov/config.yaml`.
@@ -548,22 +609,29 @@ impl DiffCommand {
 
         let require_measured = self.compile_require_measured(&config.require_measured)?;
         let mut warnings = Vec::new();
+        let mut check = ReportPathCheck {
+            repo: &repo,
+            root: &repo_path,
+            revision: Revision::Head(self.head_ref.as_deref()),
+            strict: self.fail_on_path_mismatch,
+            warnings: &mut warnings,
+        };
         let mut excluded = ExcludedFiles::default();
         let head = self.load_head(
             &config.path_mappings,
             strip_prefix.as_deref(),
             ignore.as_ref(),
-            &repo_path,
-            &mut warnings,
+            &mut check,
             &mut excluded,
         )?;
+        check.revision = Revision::Base(&base_ref);
         let baseline = match &self.baseline_report {
             Some(path) => Some(self.load_baseline(
                 path,
                 &config.path_mappings,
                 strip_prefix.as_deref(),
                 ignore.as_ref(),
-                &repo_path,
+                &mut check,
                 &mut excluded,
             )?),
             None => None,
@@ -664,18 +732,15 @@ impl DiffCommand {
 
     /// Loads the head report: one `--report`, or the merge of every shard.
     ///
-    /// Each shard is read and explicitly mapped before workspace-root checks
-    /// (so a mapped runner root is not warned about). An empty shard fails; an
-    /// unmapped workspace root is noted in `warnings`. Paths are then stripped
-    /// and filtered exactly like a lone report and merged. The
+    /// Each shard is read, mapped, and stripped before checking tracked paths,
+    /// then filtered and merged. An empty shard fails before filtering. The
     /// merge is a union, so shard order cannot change the result.
     fn load_head(
         &self,
         mappings: &[PathMapping],
         strip_prefix: Option<&Path>,
         ignore: Option<&RegexSet>,
-        repo_root: &Path,
-        warnings: &mut Vec<String>,
+        check: &mut ReportPathCheck<'_>,
         excluded: &mut ExcludedFiles,
     ) -> Result<CoverageReport> {
         anyhow::ensure!(
@@ -685,21 +750,20 @@ impl DiffCommand {
         let sharded = self.report.len() > 1;
         let mut merged = CoverageReport::new();
         for path in &self.report {
-            let path = anchor(path, repo_root);
+            let path = anchor(path, check.root);
             let mut report =
-                read_report_mode(&path, self.report_format, repo_root, self.branch_coverage)?;
-            let mapped_root = report.map_paths_with_root_match(mappings)?;
+                read_report_mode(&path, self.report_format, check.root, self.branch_coverage)?;
+            report.map_paths(mappings)?;
             if sharded {
-                // Like an in-tree absolute path, an explicitly mapped runner
-                // root makes other absolute paths (SDK/vendor files) legitimate.
-                check_shard(
-                    &path.display().to_string(),
-                    &report,
-                    strip_prefix.filter(|_| !mapped_root),
-                    warnings,
-                )?;
+                require_executable_lines(&path.display().to_string(), &report)?;
             }
-            excluded.record_head(normalise_report(&mut report, strip_prefix, ignore));
+            excluded.record_head(normalise_report(
+                &mut report,
+                strip_prefix,
+                ignore,
+                &path,
+                check,
+            )?);
             merged.merge(report);
         }
         Ok(merged)
@@ -717,17 +781,24 @@ impl DiffCommand {
         mappings: &[PathMapping],
         strip_prefix: Option<&Path>,
         ignore: Option<&RegexSet>,
-        repo_root: &Path,
+        check: &mut ReportPathCheck<'_>,
         excluded: &mut ExcludedFiles,
     ) -> Result<CoverageReport> {
+        let path = anchor(path, check.root);
         let mut report = read_report_mode(
-            &anchor(path, repo_root),
+            &path,
             self.baseline_report_format,
-            repo_root,
+            check.root,
             self.branch_coverage,
         )?;
         report.map_paths(mappings)?;
-        excluded.record_baseline(normalise_report(&mut report, strip_prefix, ignore));
+        excluded.record_baseline(normalise_report(
+            &mut report,
+            strip_prefix,
+            ignore,
+            &path,
+            check,
+        )?);
         Ok(report)
     }
 
@@ -908,6 +979,7 @@ mod tests {
             fail_under_patch: None,
             fail_on_unmeasured: Vec::new(),
             fail_under_lines: None,
+            fail_on_path_mismatch: false,
             strip_prefix: None,
             ignore_filename_regex: Vec::new(),
             config_dir: None,
@@ -1718,14 +1790,14 @@ mod tests {
     }
 
     #[test]
-    fn a_lone_report_under_another_root_does_not_warn() {
-        // Nothing disagrees when there is only one report, and the pre-sharding
-        // output stays byte-identical for existing invocations.
+    fn a_lone_report_under_another_root_warns() {
+        // A single report can also silently miss every patch line.
         let (_dir, repo, base) = repo_with_added_file();
         let only = repo.join("only.lcov");
         fs::write(&only, "SF:/some/other/runner/b.rs\nDA:1,1\nend_of_record\n").unwrap();
         let outcome = sharded(vec![only], &base).run(Some(&repo)).unwrap();
-        assert!(outcome.warnings.is_empty());
+        assert_eq!(outcome.warnings.len(), 1);
+        assert!(outcome.warnings[0].contains("only.lcov"));
     }
 
     #[test]
@@ -2288,6 +2360,72 @@ mod tests {
         let config_dir = write_coverage_config(&repo, &["(unclosed"]);
         let mut cmd = command(report, &base);
         cmd.config_dir = Some(config_dir);
+        assert!(cmd.run(Some(&repo)).is_err());
+    }
+
+    #[test]
+    fn path_mismatch_checks_each_report_before_exclusions() {
+        let (_dir, repo, base) = repo_with_added_file();
+        let bad = repo.join("bad.lcov");
+        fs::write(&bad, "SF:wrong/b.rs\nDA:1,1\nend_of_record\n").unwrap();
+        let mut cmd = command(bad.clone(), &base);
+        cmd.ignore_filename_regex = vec![".*".into()];
+        assert_eq!(cmd.run(Some(&repo)).unwrap().warnings.len(), 1);
+        cmd.fail_on_path_mismatch = true;
+        assert!(cmd.run(Some(&repo)).is_err());
+        cmd.ignore_filename_regex.clear();
+        cmd.report = vec![write_head_lcov(&repo), bad.clone()];
+        assert!(cmd.run(Some(&repo)).is_err());
+        cmd.report.pop();
+        cmd.baseline_report = Some(bad);
+        assert!(cmd
+            .run(Some(&repo))
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("bad.lcov"));
+    }
+
+    #[test]
+    fn tracked_files_with_external_paths_and_exclusions_are_quiet() {
+        let (_dir, repo, base) = repo_with_added_file();
+        let report = repo.join("mixed.lcov");
+        fs::write(
+            &report,
+            "SF:b.rs\nDA:1,1\nend_of_record\nSF:/sdk/runtime.rs\nDA:1,1\nend_of_record\n",
+        )
+        .unwrap();
+        let mut cmd = command(report, &base);
+        cmd.fail_on_path_mismatch = true;
+        cmd.ignore_filename_regex = vec!["^b".into()];
+        assert!(cmd.run(Some(&repo)).unwrap().warnings.is_empty());
+    }
+
+    #[test]
+    fn path_matching_uses_index_or_selected_revision() {
+        let (_dir, repo, base) = repo_with_added_file();
+        let repository = Repository::open(&repo).unwrap();
+        fs::write(repo.join("staged.rs"), "one\n").unwrap();
+        let mut index = repository.index().unwrap();
+        index.add_path(Path::new("staged.rs")).unwrap();
+        index.write().unwrap();
+        let report = repo.join("staged.lcov");
+        fs::write(&report, "SF:staged.rs\nDA:1,1\nend_of_record\n").unwrap();
+        let mut cmd = command(report.clone(), &base);
+        cmd.fail_on_path_mismatch = true;
+        assert!(cmd.run(Some(&repo)).unwrap().warnings.is_empty());
+        cmd.head_ref = Some("HEAD".into());
+        assert!(cmd.run(Some(&repo)).is_err());
+        fs::write(&report, "SF:b.rs\nDA:1,1\nend_of_record\n").unwrap();
+        assert!(cmd.run(Some(&repo)).is_ok());
+        cmd.head_ref = Some(base);
+        assert!(cmd.run(Some(&repo)).is_err());
+        fs::write(&report, "SF:a.rs\nDA:1,1\nend_of_record\n").unwrap();
+        assert!(cmd.run(Some(&repo)).is_ok());
+        cmd.head_ref = None;
+        let baseline = repo.join("base.lcov");
+        fs::write(&baseline, "SF:b.rs\nDA:1,1\nend_of_record\n").unwrap();
+        cmd.baseline_report = Some(baseline);
         assert!(cmd.run(Some(&repo)).is_err());
     }
 

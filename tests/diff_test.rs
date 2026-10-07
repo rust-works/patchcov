@@ -419,3 +419,70 @@ fn ignored_old_rename_name_does_not_trigger_unmeasured_gate() -> Result<()> {
     assert_eq!(value["unmeasured_files"], serde_json::json!([]));
     Ok(())
 }
+
+#[test]
+fn foreign_runner_paths_warn_and_strict_mode_fails() -> Result<()> {
+    let mut repo = TestRepo::new()?;
+    repo.commit("base", &[("a.rs", "one\n")])?;
+    repo.commit("head", &[("a.rs", "one\ntwo\nthree\nfour\nfive\n")])?;
+    let report = repo.repo_path.join("foreign.lcov");
+    fs::write(
+        &report,
+        "SF:/home/runner/work/proj/proj/a.rs\nDA:2,1\nDA:3,0\nDA:4,0\nDA:5,0\nend_of_record\n",
+    )?;
+    let run = |extra: &[&str]| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_patchcov"))
+            .arg("-C")
+            .arg(&repo.repo_path)
+            .arg("diff")
+            .arg("--report")
+            .arg(&report)
+            .arg("--base-ref")
+            .arg(repo.base_sha())
+            .args(["-o", "json"])
+            .args(extra)
+            .output()
+            .unwrap()
+    };
+    let output = run(&[]);
+    assert!(output.status.success());
+    let stderr = String::from_utf8(output.stderr)?;
+    for text in [
+        "warning:",
+        "foreign.lcov",
+        "none of its",
+        "home/runner/work/proj/proj/a.rs",
+        "--strip-prefix",
+        "diff.path-mappings",
+    ] {
+        assert!(stderr.contains(text), "{stderr}");
+    }
+    let output = run(&["--fail-on-path-mismatch"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8(output.stderr)?.contains("none of its"));
+    let output = run(&[
+        "--fail-on-path-mismatch",
+        "--strip-prefix",
+        "/home/runner/work/proj/proj",
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(json["patch_coverage"]["percent"], 25.0);
+    assert_eq!(json["patch_coverage"]["covered"], 1);
+    assert_eq!(json["patch_coverage"]["total"], 4);
+    let config = repo.repo_path.join(".patchcov");
+    fs::create_dir(&config)?;
+    fs::write(
+        config.join("config.yaml"),
+        "diff:\n  path-mappings:\n    - from: /home/runner/work/proj/proj\n      to: ''\n",
+    )?;
+    let output = run(&["--fail-on-path-mismatch"]);
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    Ok(())
+}
