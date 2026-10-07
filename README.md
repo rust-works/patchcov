@@ -109,11 +109,10 @@ is covered by tests. It is built to be a clear signal, not a dashboard.
   runtime CPU feature, say) is the usual source of phantom regressions. Per-file
   scoping, a tolerance on the headline delta and `tolerate` source markers keep that
   noise from reading as a regression while the reported numbers stay honest.
-- **Fails loudly.** An empty report, a failed shard or a malformed marker is an error,
-  not a quietly lower number. (A report whose paths match no tracked file only warns
-  unless you pass `--fail-on-path-mismatch`.) Everything that silences coverage needs a
-  stated reason and is listed in the PR comment, and settings live in
-  `.patchcov/config.yaml` in version control, so a reviewer can see what a gate does and
+- **Fails loudly.** An empty report, a failed shard, a report whose paths match no tracked
+  file or a malformed marker is an error, not a quietly lower number. Everything that
+  silences coverage needs a stated reason and is listed in the PR comment, and settings live
+  in `.patchcov/config.yaml` in version control, so a reviewer can see what a gate does and
   what was excluded.
 - **One tool across languages.** Five report formats are detected from content, so the
   same command works for Rust, Go, Java and Kotlin, JavaScript and TypeScript,
@@ -274,6 +273,7 @@ reports is visible in version control.
 | `diff.ignore-filename-regex` | Regexes for files to exclude from both reports; unioned with the flag |
 | `diff.path-mappings` | `from`/`to` directory replacements for reports whose paths differ from git's |
 | `diff.require-measured` | Globs of touched files that must appear in a report; unioned with the flag |
+| `diff.allow-path-mismatch` | Warn instead of failing when a report matches no tracked file; enabled by either this or the flag |
 | `lint-markers.include` | Globs narrowing which files `lint-markers` scans; replaced by the flag |
 
 ```yaml

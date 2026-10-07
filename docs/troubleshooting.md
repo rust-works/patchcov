@@ -55,18 +55,25 @@ If you want a *missing* file to fail, use
 patchcov joins report file names to git's repo-relative paths. Nothing matches when the report
 names files some other way, and the symptom is patch coverage that is empty or low while the
 overall total is fine, plus the changed files listed under "Touched files absent from every
-coverage report". When *no* path in a report matches a tracked file, patchcov also says so on
-stderr, naming the report and a few of the paths it could not match:
+coverage report". When *no* path in a report matches a tracked file, patchcov fails the run
+(exit 1) rather than report an empty patch that every gate would pass, naming the report and a
+few of the paths it could not match:
 
 ```text
-warning: coverage report head.lcov: none of its 120 file path(s) matches a tracked file in the
+Error: coverage report head.lcov: none of its 120 file path(s) matches a tracked file in the
 repository; unmatched normalized paths: `/ci/work/app/src/a.rs`, ...; use --strip-prefix or
-diff.path-mappings to make paths repo-relative
+diff.path-mappings to make paths repo-relative (or pass --allow-path-mismatch / set
+diff.allow-path-mismatch to warn instead)
 ```
 
-In CI, add `--fail-on-path-mismatch` so this fails the job instead of passing with an empty
-result. A single tracked-file match silences the warning, so a report with *some* wrong paths
+Fix the paths with the table below. If a report legitimately matches nothing, pass
+`--allow-path-mismatch` or set `diff.allow-path-mismatch: true` in `.patchcov/config.yaml` to
+print the same message as a warning and carry on; a gate then cannot see the patch, so use it
+sparingly. A single tracked-file match avoids the error, so a report with *some* wrong paths
 still needs the comparison below.
+
+`--fail-on-path-mismatch`, which used to opt in to this error, is now the default; it is
+still accepted but does nothing and prints a deprecation warning.
 
 Compare the two spellings directly:
 
@@ -209,5 +216,5 @@ probably measured under a different workspace root ...
 Such a shard was probably measured under a different workspace root, so its files would be keyed
 under paths that exist nowhere in the repository and would never join the diff. Map the root with
 [`--strip-prefix` or `path-mappings`](usage.md#absolute-paths-from-another-runner), or measure
-every shard on the same runner image. `patchcov diff` reports the same situation through the
-[no-match warning](#no-files-match-the-diff). See [sharded runs](usage.md#sharded-runs).
+every shard on the same runner image. `patchcov diff` reports the same situation as an
+[error](#no-files-match-the-diff). See [sharded runs](usage.md#sharded-runs).

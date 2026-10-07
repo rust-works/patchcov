@@ -91,8 +91,8 @@ pub struct DiffCommand {
     /// and a line only one shard instrumented is judged by that shard alone.
     /// With more than one `--report`, a shard with no executable lines fails the
     /// run (it would otherwise lower the result unnoticed). Every nonempty
-    /// report with no tracked-file matches after normalization draws a warning
-    /// (or fails with --fail-on-path-mismatch). Shard order does not affect output.
+    /// report with no tracked-file matches after normalization fails the run
+    /// (or only warns with --allow-path-mismatch). Shard order does not affect output.
     #[arg(long, value_name = "PATH", required = true)]
     pub report: Vec<PathBuf>,
 
@@ -159,9 +159,17 @@ pub struct DiffCommand {
     #[arg(long, value_name = "PCT")]
     pub fail_under_lines: Option<f64>,
 
-    /// Fail when any nonempty head or baseline report has no tracked-file matches.
-    /// By default these reports produce a warning with path normalization hints.
+    /// Warn, instead of failing, when a nonempty head, shard or baseline report
+    /// has no path matching a tracked file after normalization.
+    ///
+    /// Such a report cannot be joined to the diff, so the patch looks empty and
+    /// every gate passes vacuously: that is an error by default. Use this only
+    /// where it is legitimate. Unioned with config.yaml diff.allow-path-mismatch.
     #[arg(long)]
+    pub allow_path_mismatch: bool,
+
+    /// Deprecated: a path mismatch is now an error by default.
+    #[arg(long, hide = true, conflicts_with = "allow_path_mismatch")]
     pub fail_on_path_mismatch: bool,
 
     /// Override the path prefix stripped from report file paths to make them
@@ -419,7 +427,10 @@ impl ReportPathCheck<'_> {
                 "coverage report {}: none of its {} file path(s) matches a tracked file in the repository; unmatched normalized paths: {sample}; use --strip-prefix or diff.path-mappings to make paths repo-relative",
                 label.display(), report.files.len()
             );
-            anyhow::ensure!(!self.strict, "{message}");
+            anyhow::ensure!(
+                !self.strict,
+                "{message} (or pass --allow-path-mismatch / set diff.allow-path-mismatch to warn instead)"
+            );
             self.warnings.push(message);
         }
         Ok(())
@@ -481,6 +492,10 @@ struct CoverageDiffConfig {
     /// Globs requiring touched files to appear in at least one report.
     #[serde(default)]
     require_measured: Vec<String>,
+    /// Downgrades the no-tracked-file-match error to a warning, like
+    /// `--allow-path-mismatch`; either one enables it.
+    #[serde(default)]
+    allow_path_mismatch: bool,
     /// Repo-relative path regexes excluded from both head and baseline reports,
     /// unioned with `--ignore-filename-regex` and applied after `--strip-prefix`
     /// normalisation. Same unanchored semantics as the flag.
@@ -538,6 +553,11 @@ impl DiffCommand {
         if let Some(format) = self.format.take() {
             eprintln!("warning: --format is deprecated; use -o/--output instead");
             self.output = format;
+        }
+        if self.fail_on_path_mismatch {
+            eprintln!(
+                "warning: --fail-on-path-mismatch is deprecated; a path mismatch is now an error by default (use --allow-path-mismatch to warn instead)"
+            );
         }
         let outcome = self.run(repo)?;
         for warning in &outcome.warnings {
@@ -617,7 +637,7 @@ impl DiffCommand {
             repo: &repo,
             root: &repo_path,
             revision: Revision::Head(self.head_ref.as_deref()),
-            strict: self.fail_on_path_mismatch,
+            strict: !(self.allow_path_mismatch || config.allow_path_mismatch),
             warnings: &mut warnings,
         };
         let mut excluded = ExcludedFiles::default();
@@ -983,6 +1003,7 @@ mod tests {
             fail_under_patch: None,
             fail_on_unmeasured: Vec::new(),
             fail_under_lines: None,
+            allow_path_mismatch: false,
             fail_on_path_mismatch: false,
             strip_prefix: None,
             ignore_filename_regex: Vec::new(),
@@ -1022,7 +1043,7 @@ mod tests {
     fn unmeasured_files_render_and_gate_only_matching_policy() {
         let (_dir, repo, base) = repo_with_added_file();
         let report = repo.join("head.lcov");
-        fs::write(&report, "SF:other.rs\nDA:1,1\nend_of_record\n").unwrap();
+        fs::write(&report, "SF:a.rs\nDA:1,1\nend_of_record\n").unwrap();
         let mut cmd = command(report, &base);
         cmd.fail_under_patch = Some(80.0);
         let outcome = cmd.run(Some(&repo)).unwrap();
@@ -1062,7 +1083,7 @@ mod tests {
         )
         .unwrap();
         let report = repo.join("head.lcov");
-        fs::write(&report, "SF:other.rs\nDA:1,1\nend_of_record\n").unwrap();
+        fs::write(&report, "SF:a.rs\nDA:1,1\nend_of_record\n").unwrap();
         let mut cmd = command(report, &base);
         cmd.config_dir = Some(dir);
         cmd.fail_on_unmeasured = vec!["docs/**".into()];
@@ -1094,7 +1115,7 @@ mod tests {
     fn unmeasured_exclusions_baseline_shards_and_markers() {
         let (_dir, repo, base) = repo_with_added_file();
         let report = repo.join("head.lcov");
-        fs::write(&report, "SF:other.rs\nDA:1,1\nend_of_record\n").unwrap();
+        fs::write(&report, "SF:a.rs\nDA:1,1\nend_of_record\n").unwrap();
         let mut cmd = command(report, &base);
         cmd.fail_on_unmeasured = vec!["**/*.rs".into()];
         cmd.ignore_filename_regex = vec!["^b\\.rs$".into()];
@@ -1103,10 +1124,13 @@ mod tests {
         let measured = write_head_lcov(&repo);
         // write_head_lcov overwrites head.lcov, so restore unrelated first report.
         let unrelated = repo.join("other.lcov");
-        fs::write(&unrelated, "SF:other.rs\nDA:1,1\nend_of_record\n").unwrap();
+        fs::write(&unrelated, "SF:a.rs\nDA:1,1\nend_of_record\n").unwrap();
         cmd.report = vec![unrelated];
         cmd.baseline_report = Some(measured.clone());
+        // `b.rs` is not in the base tree, so this baseline matches no tracked file.
+        cmd.allow_path_mismatch = true;
         assert!(cmd.run(Some(&repo)).unwrap().unmeasured_failures.is_empty());
+        cmd.allow_path_mismatch = false;
         cmd.baseline_report = None;
         cmd.report.push(measured);
         assert!(cmd.run(Some(&repo)).unwrap().unmeasured_failures.is_empty());
@@ -1216,6 +1240,8 @@ mod tests {
                 assert!(!cmd.no_explanation);
                 if baseline {
                     cmd.baseline_report = Some(report.clone());
+                    // `b.rs` does not exist in the base tree, which this test is not about.
+                    cmd.allow_path_mismatch = true;
                 }
                 let default = cmd.run(Some(&repo)).unwrap();
                 let flagged = DiffCommand::try_parse_from([
@@ -1768,7 +1794,7 @@ mod tests {
     }
 
     #[test]
-    fn a_shard_under_another_root_warns_but_still_runs() {
+    fn a_shard_under_another_root_fails_unless_allowed() {
         let (_dir, repo, base) = repo_with_added_file();
         let one = write_shard(&repo, "one.lcov", &[(1, 1), (2, 1), (3, 1)]);
         let two = repo.join("two.lcov");
@@ -1777,29 +1803,40 @@ mod tests {
             "SF:/some/other/runner/b.rs\nDA:1,1\nDA:2,1\nend_of_record\n",
         )
         .unwrap();
-        let outcome = sharded(vec![one, two], &base).run(Some(&repo)).unwrap();
+        let mut cmd = sharded(vec![one, two], &base);
+        let message = cmd.run(Some(&repo)).err().unwrap().to_string();
+        assert!(message.contains("two.lcov"), "{message}");
+        assert!(message.contains("--strip-prefix"), "{message}");
+        cmd.allow_path_mismatch = true;
+        let outcome = cmd.run(Some(&repo)).unwrap();
         assert_eq!(outcome.warnings.len(), 1, "{:?}", outcome.warnings);
         assert!(outcome.warnings[0].contains("two.lcov"));
         assert!(outcome.warnings[0].contains("--strip-prefix"));
     }
 
     #[test]
-    fn execute_reports_shard_warnings_without_failing() {
+    fn execute_reports_allowed_shard_warnings_without_failing() {
         let (_dir, repo, base) = repo_with_added_file();
         let one = write_shard(&repo, "one.lcov", &[(1, 1), (2, 1), (3, 1)]);
         let two = repo.join("two.lcov");
         fs::write(&two, "SF:/some/other/runner/b.rs\nDA:1,1\nend_of_record\n").unwrap();
-        // The warning goes to stderr and the run still succeeds.
-        sharded(vec![one, two], &base).execute(Some(&repo)).unwrap();
+        let mut cmd = sharded(vec![one, two], &base);
+        assert!(cmd.run(Some(&repo)).is_err());
+        // With the opt-out the warning goes to stderr and the run still succeeds.
+        cmd.allow_path_mismatch = true;
+        cmd.execute(Some(&repo)).unwrap();
     }
 
     #[test]
-    fn a_lone_report_under_another_root_warns() {
+    fn a_lone_report_under_another_root_fails_unless_allowed() {
         // A single report can also silently miss every patch line.
         let (_dir, repo, base) = repo_with_added_file();
         let only = repo.join("only.lcov");
         fs::write(&only, "SF:/some/other/runner/b.rs\nDA:1,1\nend_of_record\n").unwrap();
-        let outcome = sharded(vec![only], &base).run(Some(&repo)).unwrap();
+        let mut cmd = sharded(vec![only], &base);
+        assert!(cmd.run(Some(&repo)).is_err());
+        cmd.allow_path_mismatch = true;
+        let outcome = cmd.run(Some(&repo)).unwrap();
         assert_eq!(outcome.warnings.len(), 1);
         assert!(outcome.warnings[0].contains("only.lcov"));
     }
@@ -2374,9 +2411,10 @@ mod tests {
         fs::write(&bad, "SF:wrong/b.rs\nDA:1,1\nend_of_record\n").unwrap();
         let mut cmd = command(bad.clone(), &base);
         cmd.ignore_filename_regex = vec![".*".into()];
-        assert_eq!(cmd.run(Some(&repo)).unwrap().warnings.len(), 1);
-        cmd.fail_on_path_mismatch = true;
         assert!(cmd.run(Some(&repo)).is_err());
+        cmd.allow_path_mismatch = true;
+        assert_eq!(cmd.run(Some(&repo)).unwrap().warnings.len(), 1);
+        cmd.allow_path_mismatch = false;
         cmd.ignore_filename_regex.clear();
         cmd.report = vec![write_head_lcov(&repo), bad.clone()];
         assert!(cmd.run(Some(&repo)).is_err());
@@ -2391,17 +2429,84 @@ mod tests {
     }
 
     #[test]
-    fn windows_runner_paths_warn_instead_of_panicking() {
+    fn path_mismatch_error_names_the_opt_out() {
+        let (_dir, repo, base) = repo_with_added_file();
+        let bad = repo.join("bad.lcov");
+        fs::write(&bad, "SF:wrong/b.rs\nDA:1,1\nend_of_record\n").unwrap();
+        let error = command(bad, &base).run(Some(&repo)).err().unwrap();
+        let message = error.to_string();
+        for text in [
+            "none of its 1 file path(s)",
+            "`wrong/b.rs`",
+            "--strip-prefix",
+            "--allow-path-mismatch",
+            "diff.allow-path-mismatch",
+        ] {
+            assert!(message.contains(text), "{message}");
+        }
+    }
+
+    #[test]
+    fn path_mismatch_config_opt_out_downgrades_to_a_warning() {
+        let (_dir, repo, base) = repo_with_added_file();
+        let bad = repo.join("bad.lcov");
+        fs::write(&bad, "SF:wrong/b.rs\nDA:1,1\nend_of_record\n").unwrap();
+        let config_dir = repo.join(".patchcov");
+        fs::create_dir_all(&config_dir).unwrap();
+        let mut cmd = command(bad, &base);
+        cmd.config_dir = Some(config_dir.clone());
+        for (yaml, allowed) in [
+            ("diff:\n  allow-path-mismatch: true\n", true),
+            ("diff:\n  allow-path-mismatch: false\n", false),
+            ("diff: {}\n", false),
+        ] {
+            fs::write(config_dir.join("config.yaml"), yaml).unwrap();
+            let result = cmd.run(Some(&repo));
+            if allowed {
+                assert_eq!(result.unwrap().warnings.len(), 1, "{yaml}");
+            } else {
+                assert!(result.is_err(), "{yaml}");
+            }
+        }
+        // The flag and the config key are a union: either one is enough.
+        fs::write(config_dir.join("config.yaml"), "diff: {}\n").unwrap();
+        cmd.allow_path_mismatch = true;
+        assert_eq!(cmd.run(Some(&repo)).unwrap().warnings.len(), 1);
+    }
+
+    #[test]
+    fn path_mismatch_gate_cannot_pass_vacuously_by_default() {
+        let (_dir, repo, base) = repo_with_added_file();
+        let bad = repo.join("bad.lcov");
+        fs::write(&bad, "SF:/other/root/b.rs\nDA:1,1\nend_of_record\n").unwrap();
+        let mut cmd = command(bad, &base);
+        cmd.fail_under_patch = Some(80.0);
+        assert!(cmd.run(Some(&repo)).is_err());
+        cmd.allow_path_mismatch = true;
+        let outcome = cmd.run(Some(&repo)).unwrap();
+        assert_eq!(outcome.patch_percent, None);
+        assert!(!outcome.below_gate);
+    }
+
+    #[test]
+    fn deprecated_fail_on_path_mismatch_is_accepted() {
+        let (_dir, repo, base) = repo_with_added_file();
+        let mut cmd = command(write_head_lcov(&repo), &base);
+        cmd.fail_on_path_mismatch = true;
+        assert!(cmd.execute(Some(&repo)).is_ok());
+    }
+
+    #[test]
+    fn windows_runner_paths_fail_instead_of_panicking() {
         let (_dir, repo, base) = repo_with_added_file();
         for path in [r"C:\agent\project\b.rs", "C:/agent/project/b.rs"] {
             let report = repo.join("invalid.lcov");
             fs::write(&report, format!("SF:{path}\nDA:1,1\nend_of_record\n")).unwrap();
             let mut cmd = command(report, &base);
-            assert_eq!(cmd.run(Some(&repo)).unwrap().warnings.len(), 1);
-            cmd.fail_on_path_mismatch = true;
             assert!(cmd.run(Some(&repo)).is_err());
+            cmd.allow_path_mismatch = true;
+            assert_eq!(cmd.run(Some(&repo)).unwrap().warnings.len(), 1);
             cmd.head_ref = Some("HEAD".into());
-            cmd.fail_on_path_mismatch = false;
             assert_eq!(cmd.run(Some(&repo)).unwrap().warnings.len(), 1);
         }
     }
@@ -2417,6 +2522,7 @@ mod tests {
         fs::write(&baseline, content).unwrap();
         let mut cmd = command(write_head_lcov(&repo), &base);
         cmd.baseline_report = Some(baseline);
+        cmd.allow_path_mismatch = true;
         let outcome = cmd.run(Some(&repo)).unwrap();
         assert_eq!(outcome.warnings.len(), 1);
         let warning = &outcome.warnings[0];
@@ -2442,7 +2548,6 @@ mod tests {
         )
         .unwrap();
         let mut cmd = command(report, &base);
-        cmd.fail_on_path_mismatch = true;
         cmd.ignore_filename_regex = vec!["^b".into()];
         assert!(cmd.run(Some(&repo)).unwrap().warnings.is_empty());
     }
@@ -2458,7 +2563,6 @@ mod tests {
         let report = repo.join("staged.lcov");
         fs::write(&report, "SF:staged.rs\nDA:1,1\nend_of_record\n").unwrap();
         let mut cmd = command(report.clone(), &base);
-        cmd.fail_on_path_mismatch = true;
         assert!(cmd.run(Some(&repo)).unwrap().warnings.is_empty());
         cmd.head_ref = Some("HEAD".into());
         assert!(cmd.run(Some(&repo)).is_err());

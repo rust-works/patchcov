@@ -238,15 +238,19 @@ fn producer_fixture(
         "-o",
         "json",
     ])?;
-    let Commands::Diff(cmd) = command.command else {
+    let Commands::Diff(mut cmd) = command.command else {
         unreachable!("parsed a diff command")
     };
-    // Overall coverage can exist while a path mismatch leaves the patch empty.
+    // Overall coverage can exist while a path mismatch leaves the patch empty,
+    // which is an error unless the mismatch is explicitly allowed.
+    assert!(cmd.run(Some(&repo.repo_path)).is_err(), "{fixture}");
+    cmd.allow_path_mismatch = true;
     assert_eq!(
         cmd.run(Some(&repo.repo_path))?.patch_percent,
         None,
         "{fixture}"
     );
+    cmd.allow_path_mismatch = false;
     fs::write(
         config.join("config.yaml"),
         format!("diff:\n  path-mappings:\n    - from: '{from}'\n      to: '{to}'\n"),
@@ -407,6 +411,8 @@ fn ignored_old_rename_name_does_not_trigger_unmeasured_gate() -> Result<()> {
         "**/*.rs",
         "--ignore-filename-regex",
         "^old\\.rs$",
+        // The stale report names `old.rs`, which the rename left untracked.
+        "--allow-path-mismatch",
         "--output",
         "json",
     ])?;
@@ -421,7 +427,7 @@ fn ignored_old_rename_name_does_not_trigger_unmeasured_gate() -> Result<()> {
 }
 
 #[test]
-fn foreign_runner_paths_warn_and_strict_mode_fails() -> Result<()> {
+fn foreign_runner_paths_fail_by_default_and_can_be_allowed() -> Result<()> {
     let mut repo = TestRepo::new()?;
     repo.commit("base", &[("a.rs", "one\n")])?;
     repo.commit("head", &[("a.rs", "one\ntwo\nthree\nfour\nfive\n")])?;
@@ -444,27 +450,41 @@ fn foreign_runner_paths_warn_and_strict_mode_fails() -> Result<()> {
             .output()
             .unwrap()
     };
-    let output = run(&[]);
-    assert!(output.status.success());
+    // The default is an error, even with a gate, and the message names the way out.
+    let output = run(&["--fail-under-patch", "80"]);
+    assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr)?;
     for text in [
-        "warning:",
-        "foreign.lcov",
         "none of its",
         "home/runner/work/proj/proj/a.rs",
         "--strip-prefix",
         "diff.path-mappings",
+        "--allow-path-mismatch",
     ] {
         assert!(stderr.contains(text), "{stderr}");
     }
+    // The opt-out restores the warning, and the run passes.
+    let output = run(&["--allow-path-mismatch", "--fail-under-patch", "80"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8(output.stderr)?;
+    for text in ["warning:", "foreign.lcov", "none of its"] {
+        assert!(stderr.contains(text), "{stderr}");
+    }
+    // The deprecated flag is still accepted (it is now the default) but says so.
     let output = run(&["--fail-on-path-mismatch"]);
     assert!(!output.status.success());
-    assert!(String::from_utf8(output.stderr)?.contains("none of its"));
-    let output = run(&[
-        "--fail-on-path-mismatch",
-        "--strip-prefix",
-        "/home/runner/work/proj/proj",
-    ]);
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(
+        stderr.contains("--fail-on-path-mismatch is deprecated"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("none of its"), "{stderr}");
+    // Normalizing the paths fixes it without any opt-out.
+    let output = run(&["--strip-prefix", "/home/runner/work/proj/proj"]);
     assert!(
         output.status.success(),
         "{}",
@@ -481,8 +501,45 @@ fn foreign_runner_paths_warn_and_strict_mode_fails() -> Result<()> {
         config.join("config.yaml"),
         "diff:\n  path-mappings:\n    - from: /home/runner/work/proj/proj\n      to: ''\n",
     )?;
-    let output = run(&["--fail-on-path-mismatch"]);
+    let output = run(&[]);
     assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    // The config opt-out alone downgrades the error to a warning.
+    fs::write(
+        config.join("config.yaml"),
+        "diff:\n  allow-path-mismatch: true\n",
+    )?;
+    let output = run(&["--fail-under-patch", "80"]);
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stderr)?.contains("warning:"));
+    Ok(())
+}
+
+#[test]
+fn report_mixing_tracked_and_external_paths_passes_by_default() -> Result<()> {
+    let mut repo = TestRepo::new()?;
+    repo.commit("base", &[("a.rs", "one\n")])?;
+    repo.commit("head", &[("a.rs", "one\ntwo\nthree\n")])?;
+    let report = repo.repo_path.join("mixed.lcov");
+    fs::write(
+        &report,
+        "SF:a.rs\nDA:2,1\nDA:3,1\nend_of_record\nSF:/sdk/runtime/vendor.rs\nDA:1,0\nend_of_record\n",
+    )?;
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_patchcov"))
+        .arg("-C")
+        .arg(&repo.repo_path)
+        .arg("diff")
+        .arg("--report")
+        .arg(&report)
+        .arg("--base-ref")
+        .arg(repo.base_sha())
+        .args(["--fail-under-patch", "100"])
+        .output()?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(output.stderr.is_empty());
     Ok(())
 }

@@ -46,7 +46,7 @@ everywhere.
 | `--branch-coverage` | Score lines with missed lcov/Cobertura branches as uncovered, in head and baseline |
 | `--collapse-ranges` | Collapse consecutive uncovered new lines into ranges (`9-11`) in the markdown per-file table; JSON and YAML always list single lines |
 | `--all-files` | Report deltas and indirect changes for all files, not just touched ones |
-| `--fail-on-path-mismatch` | Fail, instead of warning, when a nonempty head, shard or baseline report has no path matching a tracked file after normalization |
+| `--allow-path-mismatch` | Warn, instead of failing, when a nonempty head, shard or baseline report has no path matching a tracked file after normalization. Off by default: such a report fails. Unioned with `diff.allow-path-mismatch` |
 | `--strip-prefix <PATH>` | Prefix stripped from report paths to make them repo-relative (default: the repository working directory) |
 | `--ignore-filename-regex <REGEX>` | Exclude matching files from both reports (repeatable or comma-separated); unioned with `diff.ignore-filename-regex` |
 | `--config-dir <PATH>` | Directory searched for `config.yaml` (default: the discovered `.patchcov/`, honouring `PATCHCOV_CONFIG_DIR`) |
@@ -57,7 +57,8 @@ everywhere.
 
 The five footer and link flags fall back to environment variables; see
 [Environment variables](#environment-variables). `--format` is a hidden, deprecated alias
-of `-o/--output` that prints a warning.
+of `-o/--output` that prints a warning. `--fail-on-path-mismatch` is a hidden, deprecated no-op
+(it is now the default) that prints a warning; it conflicts with `--allow-path-mismatch`.
 
 ## `patchcov merge` flags
 
@@ -83,9 +84,9 @@ itself, on stdout, is still printed when a *gate* fails, so a CI job can post it
 
 | Code | Meaning | Examples (stderr) |
 |-----:|---------|-------------------|
-| `0` | Success. The report was printed and no gate failed. Warnings on stderr (a shard measured under another root, a lint glob that matched nothing) do not change it | |
+| `0` | Success. The report was printed and no gate failed. Warnings on stderr (a path mismatch you allowed, a lint glob that matched nothing) do not change it | |
 | `1` | A **gate failed** (`diff`) | `patch coverage 61.11% is below the --fail-under-patch threshold of 80.00%`<br>`line coverage 75.00% is below the --fail-under-lines threshold of 100.00%`<br>`the report has no executable lines, so the --fail-under-lines threshold of 50.00% cannot be met`<br>`touched files absent from every coverage report (--fail-on-unmeasured / diff.require-measured): src/a.rs`. Every failed gate is named, joined by `;` |
-| `1` | A **path mismatch**, with `--fail-on-path-mismatch` (`diff`); without the flag it is only a warning | `coverage report <path>: none of its N file path(s) matches a tracked file in the repository; unmatched normalized paths: ...; use --strip-prefix or diff.path-mappings to make paths repo-relative` |
+| `1` | A **path mismatch** (`diff`): a nonempty report has no path matching a tracked file. With `--allow-path-mismatch` or `diff.allow-path-mismatch` it is only a warning | `coverage report <path>: none of its N file path(s) matches a tracked file in the repository; unmatched normalized paths: ...; use --strip-prefix or diff.path-mappings to make paths repo-relative (or pass --allow-path-mismatch / set diff.allow-path-mismatch to warn instead)` |
 | `1` | A **report is unreadable, empty or unparseable** (`diff`, `merge`) | `could not read coverage report ./missing.lcov: No such file or directory`<br>`could not parse coverage report ./empty.lcov: coverage report format auto-detection failed: coverage report is empty; cannot detect format`<br>`coverage shard <path> has no executable lines` (several `--report`, or any `merge` input) |
 | `1` | A **source marker is malformed** (`lint-markers`, and `diff` for files in the report) | ``src/m.rs:1: `patchcov: coverage ignore` needs a reason (write ...)``<br>`coverage marker lint failed` |
 | `1` | **Config is bad** | `could not parse coverage config ./.patchcov/config.yaml: ...` (malformed YAML, wrong type, a misspelled `path-mappings` field)<br>`invalid ignore-filename-regex pattern`<br>`invalid glob ... in --fail-on-unmeasured / diff.require-measured` |
@@ -246,6 +247,7 @@ older binary, with one exception: a misspelled field inside a `path-mappings` en
 | `diff.ignore-filename-regex` | list of regex strings | `[]` | `diff` | **Union** with `--ignore-filename-regex`: the flag only adds |
 | `diff.path-mappings` | list of `{from, to}` | `[]` | `diff` | No flag; config only. `merge` does not read it |
 | `diff.require-measured` | list of glob strings | `[]` | `diff` | **Union** with `--fail-on-unmeasured` |
+| `diff.allow-path-mismatch` | boolean | `false` | `diff` | **Either** one enables it: set here or pass `--allow-path-mismatch` |
 | `lint-markers.include` | list of glob strings | `[]` (every tracked text file) | `lint-markers` | **Replaced** by `--include` when the flag is given |
 
 ```yaml
@@ -258,6 +260,7 @@ diff:
       to: services/api/src/main/java/com/example
   require-measured:
     - 'src/**/*.rs'
+  allow-path-mismatch: false
 lint-markers:
   include:
     - '**/*.rs'
@@ -293,6 +296,16 @@ Globs matched against whole repo-relative paths: `*` stays within one directory,
 directories (`src/**/*.rs` also matches `src/a.rs`). A touched file that matches and is absent
 from every report fails the run. An empty or invalid glob is an error. See
 [requiring touched files to be measured](usage.md#requiring-touched-files-to-be-measured).
+
+### `diff.allow-path-mismatch`
+
+A boolean, `false` by default. By default `diff` fails when a nonempty head, shard or baseline
+report has no path matching a tracked file, because such a report cannot be joined to the diff
+and a gate over it would pass without measuring anything. `true` turns that error into the same
+message as a warning on stderr, exactly as `--allow-path-mismatch` does; either one is enough.
+Set it only for a repository where a report legitimately matches nothing, since a gate cannot
+see a patch it cannot join. A report with at least one tracked path never triggers the check.
+See [absolute paths from another runner](usage.md#absolute-paths-from-another-runner).
 
 ### `lint-markers.include`
 

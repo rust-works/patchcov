@@ -73,6 +73,7 @@ mod tests {
                 fail_under_patch: None,
                 fail_on_unmeasured: Vec::new(),
                 fail_under_lines: None,
+                allow_path_mismatch: false,
                 fail_on_path_mismatch: false,
                 strip_prefix: None,
                 ignore_filename_regex: Vec::new(),

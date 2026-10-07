@@ -163,14 +163,19 @@ patchcov diff --report head.lcov \
   --strip-prefix /home/runner/work/project/project
 ```
 
-After path normalization, `diff` warns on stderr when a nonempty head report, shard or
-baseline has **no** path that matches a tracked repository file. The warning names the report,
-samples up to three unmatched normalized paths, and suggests `--strip-prefix` or
-`diff.path-mappings`. Add `--fail-on-path-mismatch` to make it an error in CI. Any single
-tracked-file match suppresses the warning, because reports legitimately name some SDK or vendor
-files. The check runs before exclusions, so `--ignore-filename-regex` cannot hide it. An
-implicit head is checked against the git index, an explicit `--head-ref` against that
-revision's tree, and the baseline against the base tree.
+After path normalization, `diff` **fails** when a nonempty head report, shard or baseline has
+**no** path that matches a tracked repository file. Such a report cannot be joined to the diff,
+so the patch would look empty and every gate would pass without measuring anything. The error
+names the report, samples up to three unmatched normalized paths, and suggests `--strip-prefix`
+or `diff.path-mappings`. Any single tracked-file match avoids the error, because reports
+legitimately name some SDK or vendor files. The check runs before exclusions, so
+`--ignore-filename-regex` cannot hide it. An implicit head is checked against the git index, an
+explicit `--head-ref` against that revision's tree, and the baseline against the base tree.
+
+If a report legitimately matches nothing, pass `--allow-path-mismatch` (or set
+`diff.allow-path-mismatch: true` in `.patchcov/config.yaml`) to get the same message as a
+warning on stderr and exit as usual. Prefer fixing the paths: with the opt-out, a gate cannot
+see the patch. See [`diff.allow-path-mismatch`](reference.md#diffallow-path-mismatch).
 
 One strip prefix applies to both head and baseline. If they came from different roots,
 map each root explicitly instead:
@@ -490,14 +495,14 @@ worse. With more than one `--report`:
 - a shard that is missing, unparseable, or has **no executable lines** fails the run,
   naming the shard (checked before `--ignore-filename-regex`, so a shard that only covers
   excluded files is not mistaken for a failed one);
-- a shard whose normalized paths **all** fail to match tracked repository files draws a
-  warning on stderr: it was probably measured under a different workspace root, and its
-  files would key under paths that exist nowhere in the repository. A shard with some
-  in-tree paths is left alone, because reports legitimately name a few out-of-tree files
-  (the standard library, vendored sources).
+- a shard whose normalized paths **all** fail to match tracked repository files fails the
+  run: it was probably measured under a different workspace root, and its files would key
+  under paths that exist nowhere in the repository. A shard with some in-tree paths is left
+  alone, because reports legitimately name a few out-of-tree files (the standard library,
+  vendored sources).
 
 The tracked-path check also applies to a single `--report` and to the baseline, and
-`--fail-on-path-mismatch` turns its warning into an error (see
+`--allow-path-mismatch` turns its error into a warning (see
 [report paths](#report-paths-and-repository-paths)). The empty-shard check is specific to runs
 with more than one `--report`.
 
@@ -505,7 +510,7 @@ with more than one `--report`.
 
 - `--strip-prefix` is one value, so every shard has to share a workspace root. Shards from
   the same CI runner image do; a mix of, say, Linux and macOS runners does not, and the
-  warning above is the signal.
+  path-mismatch error above is the signal.
 - `--baseline-report` takes **one** report, so a baseline from a sharded run must be a
   single file. Make it with [`patchcov merge`](#merging-shards-into-one-file).
 - Recomputing the baseline at the merge base, and the `codecov.json` /
