@@ -103,7 +103,8 @@ fn parse_impl(content: &str, branch_coverage: bool) -> Result<CoverageReport> {
 ///
 /// Only what the line model holds is written: `TN`, `SF`, `DA`, `LF`, `LH` and
 /// `end_of_record`. Function (`FN*`) and branch (`BRDA`) records are dropped,
-/// including any branch evidence retained by [`parse_with_branches`]. `LF`/`LH` count the `DA` records written, so a
+/// including any branch evidence retained by [`parse_with_branches`].
+/// `LF`/`LH` count the `DA` records written, so a
 /// file is consistent with itself; `llvm-cov` writes them from its own summary
 /// instead, which counts some lines more than once.
 ///

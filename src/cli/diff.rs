@@ -2470,4 +2470,60 @@ mod tests {
             .unwrap();
         assert!(cmd.branch_coverage);
     }
+
+    #[test]
+    fn baseline_partial_to_full_gains_and_partial_to_partial_stays_uncovered() {
+        let (_dir, repo, base) = repo_with_added_file();
+        let head = repo.join("head.xml");
+        let baseline = repo.join("base.xml");
+        let report = |covered| {
+            format!(
+                r#"<coverage><class filename="a.rs"><line number="1" hits="1" condition-coverage="50% ({covered}/2)"/></class></coverage>"#
+            )
+        };
+        fs::write(&baseline, report(1)).unwrap();
+        fs::write(&head, report(0)).unwrap();
+        let mut cmd = command(head.clone(), &base);
+        cmd.baseline_report = Some(baseline);
+        cmd.branch_coverage = true;
+        cmd.all_files = true;
+        cmd.output = OutputFormatArg::Json;
+        let json: serde_json::Value =
+            serde_json::from_str(&cmd.run(Some(&repo)).unwrap().rendered).unwrap();
+        assert_eq!(json["indirect_changes"]["newly_uncovered"], 0);
+        assert_eq!(json["indirect_changes"]["newly_covered"], 0);
+        fs::write(head, report(2)).unwrap();
+        let outcome = cmd.run(Some(&repo)).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&outcome.rendered).unwrap();
+        assert_eq!(json["indirect_changes"]["newly_covered"], 1);
+        assert_eq!(outcome.line_percent, Some(100.0));
+    }
+
+    #[test]
+    fn ignore_marker_removes_a_partial_line_from_branch_aware_gates() {
+        let (_dir, repo, base) = repo_with_added_file();
+        fs::write(
+            repo.join("b.rs"),
+            format!(
+                "one\ntwo // {} coverage ignore-line reason=\"generated\"\nthree\n",
+                "patchcov:"
+            ),
+        )
+        .unwrap();
+        let path = repo.join("head.lcov");
+        fs::write(
+            &path,
+            "SF:b.rs\nDA:1,1\nDA:2,1\nDA:3,1\nBRDA:2,0,0,0\nend_of_record",
+        )
+        .unwrap();
+        let mut cmd = command(path, &base);
+        cmd.branch_coverage = true;
+        cmd.fail_under_patch = Some(100.0);
+        cmd.fail_under_lines = Some(100.0);
+        let outcome = cmd.run(Some(&repo)).unwrap();
+        assert_eq!(outcome.patch_percent, Some(100.0));
+        assert_eq!(outcome.line_percent, Some(100.0));
+        assert!(!outcome.below_gate && !outcome.below_line_gate);
+        assert!(!outcome.rendered.contains("`b.rs:2`"));
+    }
 }
