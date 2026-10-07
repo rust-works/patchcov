@@ -78,6 +78,7 @@ Run the same checks as CI from your checkout:
 cargo fmt --check
 cargo test --all-targets
 cargo clippy --all-targets -- -D warnings
+cargo run --locked -- lint-markers
 cargo +1.88.0 check --all-targets
 RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --document-private-items
 ```
@@ -85,9 +86,11 @@ RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --document-private-items
 Install the MSRV toolchain with `rustup toolchain install 1.88.0 --profile minimal` if needed.
 CI also runs tests on Linux, macOS, and Windows.
 
-If you changed documentation, also run `patchcov lint-markers` (this repository's
+`lint-markers` runs in CI's `Lint` job. This repository's
 [`.patchcov/config.yaml`](.patchcov/config.yaml) limits it to Rust sources, so prose that
-describes the marker syntax is not flagged) and check that relative links and `#anchors` in
+describes the marker syntax is not flagged.
+
+If you changed documentation, also check that relative links and `#anchors` in
 `README.md`, `CONTRIBUTING.md` and `docs/` still resolve.
 
 ## Merging

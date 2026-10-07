@@ -35,6 +35,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo run --locked -- lint-markers
 
   msrv:
     name: MSRV (1.88)
