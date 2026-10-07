@@ -322,6 +322,8 @@ impl ExcludedFiles {
 pub struct CoverageDiff {
     /// Project-wide patch coverage.
     pub patch: PatchCoverage,
+    /// Non-deleted touched paths absent under either name from head and baseline.
+    pub unmeasured_files: Vec<String>,
     /// Per-file patch coverage (only files with added, instrumented lines).
     pub file_patches: Vec<FilePatch>,
     /// Flattened actionable list of uncovered added lines.
@@ -399,6 +401,7 @@ pub fn analyze_with_markers(
     markers: &Markers,
 ) -> CoverageDiff {
     let mut result = CoverageDiff {
+        unmeasured_files: unmeasured_files(head, diff, baseline),
         total_after: head.percent(),
         has_baseline: baseline.is_some(),
         markers: applied_markers(markers),
@@ -414,6 +417,29 @@ pub fn analyze_with_markers(
     }
 
     result
+}
+
+/// Finds touched files absent from every report, using both names for renames.
+pub(crate) fn unmeasured_files(
+    head: &CoverageReport,
+    diff: &DiffModel,
+    baseline: Option<&CoverageReport>,
+) -> Vec<String> {
+    diff.files
+        .values()
+        .filter(|file| !file.is_deleted)
+        .filter(|file| {
+            !std::iter::once(&file.new_path)
+                .chain(file.old_path.as_ref())
+                .any(|path| {
+                    head.files.contains_key(path)
+                        || baseline.is_some_and(|report| report.files.contains_key(path))
+                })
+        })
+        .map(|file| file.new_path.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 /// Flattens both revisions' markers into the reportable list, collapsing a

@@ -354,3 +354,35 @@ fn jacoco_source_root_mapping_attributes_patch() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn unmeasured_presence_handles_renames_deletions_and_empty_entries() -> Result<()> {
+    let mut repo = TestRepo::new()?;
+    repo.commit(
+        "base",
+        &[("old.rs", "one\ntwo\n"), ("deleted.rs", "gone\n")],
+    )?;
+    repo.commit(
+        "head",
+        &[
+            ("new.rs", "one\ntwo\n"),
+            ("README.md", "docs\n"),
+            ("src/a.rs", "code\n"),
+        ],
+    )?;
+    let diff = repo.diff()?;
+    assert!(diff.files["deleted.rs"].is_deleted);
+    assert!(diff.files["new.rs"].is_rename);
+    let mut head = CoverageReport::new();
+    head.files
+        .insert("src/a.rs".into(), FileCoverage::new("src/a.rs"));
+    let mut baseline = CoverageReport::new();
+    baseline
+        .files
+        .insert("old.rs".into(), FileCoverage::new("old.rs"));
+    let result = analyze(&head, &diff, Some(&baseline), DiffScope::DiffOnly);
+    assert_eq!(result.unmeasured_files, ["README.md"]);
+    let result = analyze(&head, &diff, None, DiffScope::All);
+    assert_eq!(result.unmeasured_files, ["README.md", "new.rs"]);
+    Ok(())
+}
