@@ -122,6 +122,10 @@ pub struct DiffCommand {
     #[arg(short = 'o', long, value_enum, default_value_t = OutputFormatArg::Markdown)]
     pub output: OutputFormatArg,
 
+    /// Omit the explanation block from JSON/YAML output; Markdown is unchanged.
+    #[arg(long)]
+    pub no_explanation: bool,
+
     /// Deprecated: use `-o`/`--output` instead.
     #[arg(long = "format", hide = true)]
     pub format: Option<OutputFormatArg>,
@@ -722,6 +726,7 @@ impl DiffCommand {
             head_sha: or_env(&self.head_sha, "COVERAGE_HEAD_SHA"),
             commit_url: or_env(&self.commit_url, "COVERAGE_COMMIT_URL"),
             collapse_ranges: self.collapse_ranges,
+            no_explanation: self.no_explanation,
         }
     }
 }
@@ -799,6 +804,7 @@ mod tests {
             baseline_report: None,
             baseline_report_format: ReportFormat::Auto,
             output: OutputFormatArg::Markdown,
+            no_explanation: false,
             format: None,
             fail_under_patch: None,
             fail_under_lines: None,
@@ -893,6 +899,71 @@ mod tests {
             let outcome = cmd.run(Some(&repo)).unwrap();
             assert!(outcome.rendered.contains("patch_coverage"));
         }
+    }
+
+    #[test]
+    fn no_explanation_removes_only_explanation_in_structured_output() {
+        let (_dir, repo, base) = repo_with_added_file();
+        let report = write_head_lcov(&repo);
+        for format in ["json", "yaml"] {
+            for baseline in [false, true] {
+                let mut cmd = DiffCommand::try_parse_from([
+                    "diff",
+                    "--report",
+                    report.to_str().unwrap(),
+                    "--base-ref",
+                    &base,
+                    "-o",
+                    format,
+                    "--fail-under-patch",
+                    "99",
+                ])
+                .unwrap();
+                assert!(!cmd.no_explanation);
+                if baseline {
+                    cmd.baseline_report = Some(report.clone());
+                }
+                let default = cmd.run(Some(&repo)).unwrap();
+                let flagged = DiffCommand::try_parse_from([
+                    "diff",
+                    "--report",
+                    report.to_str().unwrap(),
+                    "--no-explanation",
+                ])
+                .unwrap();
+                cmd.no_explanation = flagged.no_explanation;
+                let compact = cmd.run(Some(&repo)).unwrap();
+                let parse = |s: &str| -> serde_json::Value {
+                    if format == "json" {
+                        serde_json::from_str(s).unwrap()
+                    } else {
+                        serde_yaml::from_str(s).unwrap()
+                    }
+                };
+                let mut expected = parse(&default.rendered);
+                assert!(expected
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("explanation")
+                    .is_some());
+                let actual = parse(&compact.rendered);
+                assert!(!actual.as_object().unwrap().contains_key("explanation"));
+                assert_eq!(actual, expected, "format={format}, baseline={baseline}");
+                assert_eq!(compact.patch_percent, default.patch_percent);
+                assert!(default.below_gate);
+                assert_eq!(compact.below_gate, default.below_gate);
+                assert_eq!(compact.warnings, default.warnings);
+            }
+        }
+    }
+
+    #[test]
+    fn no_explanation_leaves_markdown_unchanged() {
+        let (_dir, repo, base) = repo_with_added_file();
+        let mut cmd = command(write_head_lcov(&repo), &base);
+        let default = cmd.run(Some(&repo)).unwrap().rendered;
+        cmd.no_explanation = true;
+        assert_eq!(cmd.run(Some(&repo)).unwrap().rendered, default);
     }
 
     /// Builds a marker line. The introducer is assembled at runtime so this

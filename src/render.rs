@@ -56,6 +56,8 @@ pub enum OutputFormat {
 /// Decoration inputs and options for rendering.
 #[derive(Debug, Clone, Default)]
 pub struct RenderOptions {
+    /// Omit the explanation block from JSON/YAML output (default: false).
+    pub no_explanation: bool,
     /// Link to the full coverage-summary artifact.
     pub artifact_url: Option<String>,
     /// Link to the CI run.
@@ -560,7 +562,8 @@ fn render_footer(opts: &RenderOptions, out: &mut String) {
 /// field-presence explanation block the project uses for structured output.
 #[derive(Debug, Clone, Serialize)]
 struct CoverageDiffView {
-    explanation: FieldExplanation,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    explanation: Option<FieldExplanation>,
     patch_coverage: PatchView,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     uncovered_new_lines: Vec<String>,
@@ -663,7 +666,7 @@ struct IndirectLineView {
 }
 
 impl CoverageDiffView {
-    fn build(diff: &CoverageDiff, _opts: &RenderOptions) -> Self {
+    fn build(diff: &CoverageDiff, opts: &RenderOptions) -> Self {
         let patch_coverage = PatchView {
             percent: diff.patch.percent().map(round2),
             covered: diff.patch.covered,
@@ -752,7 +755,7 @@ impl CoverageDiffView {
         });
 
         Self {
-            explanation: explanation(),
+            explanation: (!opts.no_explanation).then(explanation),
             patch_coverage,
             uncovered_new_lines,
             project_delta,
@@ -764,6 +767,9 @@ impl CoverageDiffView {
 
     /// Sets the `present` flag on each documented field based on the data.
     fn update_field_presence(&mut self) {
+        let Some(explanation) = &mut self.explanation else {
+            return;
+        };
         let has_patch_files = !self.patch_coverage.files.is_empty();
         let has_uncovered = !self.uncovered_new_lines.is_empty();
         let has_baseline = self.project_delta.is_some();
@@ -773,7 +779,7 @@ impl CoverageDiffView {
             .is_some_and(|i| !i.lines.is_empty());
         let has_markers = !self.markers.is_empty();
         let has_excluded = self.excluded_files.is_some();
-        for field in &mut self.explanation.fields {
+        for field in &mut explanation.fields {
             field.present = match field.name.as_str() {
                 "patch_coverage.percent" | "patch_coverage.covered" | "patch_coverage.total" => {
                     true
