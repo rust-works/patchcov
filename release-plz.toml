@@ -19,13 +19,15 @@ semver_check = true
 # Group `docs:` commits under their own *Documentation* heading rather than the
 # catch-all *Other*. A list given here replaces release-plz's defaults instead of
 # extending them, so the defaults are restated, in order, around the one addition.
-# Parsers match first to last; the final `^.*` catches everything else.
+# Parsers match first to last; the final `^.*` catches everything else. The `docs`
+# pattern is anchored to the conventional-commit form (`docs:`, `docs(scope):`,
+# `docs!:`), so a subject that merely starts with "docs" is not grouped there.
 commit_parsers = [
   { message = "^feat", group = "added" },
   { message = "^changed", group = "changed" },
   { message = "^deprecated", group = "deprecated" },
   { message = "^fix", group = "fixed" },
   { message = "^security", group = "security" },
-  { message = "^docs", group = "documentation" },
+  { message = '^docs(\(.+\))?!?:', group = "documentation" },
   { message = "^.*", group = "other" },
 ]

@@ -47,11 +47,13 @@ downloaded one; `cargo install patchcov` avoids that.
 
 release-plz builds each release's changelog section from the commit subjects on `main`,
 grouped by conventional-commit type: `feat` under *Added*, `fix` under *Fixed*, `docs` under
-*Documentation*, and the rest (`chore:` and commits with no type) under *Other*. The grouping
-is the `commit_parsers` list in [`release-plz.toml`](../release-plz.toml), which restates
-release-plz's defaults around the `docs` entry because a custom list replaces them. The 0.2.0
-section predates the *Documentation* group, so its documentation changes sit under *Other*. The
-subject you write on the branch is the only text a user sees, so write it for them.
+*Documentation*, and `changed`, `deprecated` and `security` under their own headings. Every
+other type (`chore:`, `refactor:`, `test:`, `ci:`, `perf:`) and commits with no type fall under
+*Other*. The grouping is the `commit_parsers` list in [`release-plz.toml`](../release-plz.toml),
+which restates release-plz's defaults around the `docs` entry because a custom list replaces
+them. The 0.2.0 section predates the *Documentation* group, so its documentation changes sit
+under *Other*. The subject you write on the branch is the only text a user sees, so write it
+for them.
 Before you select **Merge when ready** on a release PR, read its changelog section the way a
 user would:
 
