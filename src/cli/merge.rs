@@ -3,7 +3,7 @@
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use clap::Parser;
 use git2::Repository;
 
@@ -123,19 +123,17 @@ impl MergeCommand {
     /// touched, so a failed merge writes nothing.
     pub fn run(&self, repo_root: Option<&Path>) -> Result<MergeOutcome> {
         if self.report.is_empty() {
-            return Err(anyhow!("at least one coverage report is required"))
-                .classify(ExitKind::Usage);
+            return Err(ExitKind::Usage.error("at least one coverage report is required"));
         }
         // `patchcov diff -o` takes a format, so `-o json` is a likely slip, and
         // would otherwise write a file called `json` and exit 0.
         for format in OUTPUT_FORMAT_NAMES {
             if self.output == Path::new(format) {
-                return Err(anyhow!(
+                return Err(ExitKind::Usage.error(format!(
                     "-o/--output is the file to write, but `{format}` looks like an output \
                      format (`patchcov diff -o` selects one); to write a file with that name, \
                      pass `./{format}`"
-                ))
-                .classify(ExitKind::Usage);
+                )));
             }
         }
         let prefix = match &self.strip_prefix {

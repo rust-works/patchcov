@@ -15,6 +15,7 @@ use std::fmt;
 /// `docs/reference.md#exit-codes`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum ExitKind {
     /// A gate failed: `--fail-under-patch`, `--fail-under-lines` or
     /// `--fail-on-unmeasured`.
@@ -24,7 +25,7 @@ pub enum ExitKind {
     Usage = 2,
     /// A coverage report is unreadable, empty or unparseable.
     Report = 3,
-    /// A `patchcov: coverage` source marker is malformed.
+    /// A coverage marker in the source is malformed.
     Marker = 4,
     /// The config file, a path mapping, an ignore regex or a glob is bad.
     Config = 5,
@@ -41,12 +42,24 @@ impl ExitKind {
     pub const fn code(self) -> u8 {
         self as u8
     }
+
+    /// A new error with this class and `message`, for a check that fails outright.
+    pub fn error(
+        self,
+        message: impl fmt::Display + fmt::Debug + Send + Sync + 'static,
+    ) -> anyhow::Error {
+        anyhow::Error::new(ExitError {
+            kind: self,
+            source: anyhow::Error::msg(message),
+        })
+    }
 }
 
 /// An error tagged with the [`ExitKind`] that decides the exit code.
 ///
 /// It displays as the error it wraps and continues that error's chain, so
-/// `{err:#}` prints the same text with or without the tag.
+/// `{err:#}` prints the same text with or without the tag. The wrapped error
+/// itself is no longer reachable by downcast, only its causes are.
 #[derive(Debug)]
 pub struct ExitError {
     kind: ExitKind,
@@ -115,6 +128,13 @@ mod tests {
     use anyhow::{anyhow, Context};
 
     use super::*;
+
+    #[test]
+    fn error_builds_a_tagged_error() {
+        let err = ExitKind::Gate.error("it failed");
+        assert_eq!(code(&err), 1);
+        assert_eq!(format!("{err:#}"), "it failed");
+    }
 
     fn fail(kind: ExitKind) -> anyhow::Error {
         Err::<(), _>(anyhow!("boom")).classify(kind).unwrap_err()

@@ -370,11 +370,10 @@ fn read_report_mode(
             Format::Lcov => crate::lcov::parse_with_branches(&content),
             Format::Cobertura => crate::cobertura::parse_with_branches(&content),
             _ => {
-                return Err(anyhow::anyhow!(
+                return Err(ExitKind::Usage.error(format!(
                     "--branch-coverage supports only lcov and Cobertura reports: {}",
                     path.display()
-                ))
-                .classify(ExitKind::Usage)
+                )))
             }
         }
     } else {
@@ -448,10 +447,9 @@ impl ReportPathCheck<'_> {
                 label.display(), report.files.len()
             );
             if self.strict {
-                return Err(anyhow::anyhow!(
+                return Err(ExitKind::PathMismatch.error(format!(
                     "{message} (or pass --allow-path-mismatch / set diff.allow-path-mismatch to warn instead)"
-                ))
-                .classify(ExitKind::PathMismatch);
+                )));
             }
             self.warnings.push(message);
         }
@@ -592,7 +590,7 @@ impl DiffCommand {
         println!("{}", outcome.rendered);
         let failures = self.gate_failures(&outcome);
         if !failures.is_empty() {
-            return Err(anyhow::anyhow!(failures.join("; "))).classify(ExitKind::Gate);
+            return Err(ExitKind::Gate.error(failures.join("; ")));
         }
         Ok(())
     }
@@ -796,8 +794,7 @@ impl DiffCommand {
         excluded: &mut ExcludedFiles,
     ) -> Result<CoverageReport> {
         if self.report.is_empty() {
-            return Err(anyhow::anyhow!("at least one coverage report is required"))
-                .classify(ExitKind::Usage);
+            return Err(ExitKind::Usage.error("at least one coverage report is required"));
         }
         let sharded = self.report.len() > 1;
         let mut merged = CoverageReport::new();
@@ -922,10 +919,8 @@ impl DiffCommand {
         }
         for pattern in self.fail_on_unmeasured.iter().chain(config) {
             if pattern.is_empty() {
-                return Err(anyhow::anyhow!(
-                    "empty glob in --fail-on-unmeasured / diff.require-measured"
-                ))
-                .classify(ExitKind::Config);
+                return Err(ExitKind::Config
+                    .error("empty glob in --fail-on-unmeasured / diff.require-measured"));
             }
             builder.add(GlobBuilder::new(pattern).literal_separator(true).build()
                 .with_context(|| format!("invalid glob `{pattern}` in --fail-on-unmeasured / diff.require-measured"))

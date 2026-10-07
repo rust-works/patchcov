@@ -104,6 +104,8 @@ fn run(root: &Path, head: &[&str], args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_patchcov"))
         // Keep an ambient override out of the run.
         .env_remove("PATCHCOV_CONFIG_DIR")
+        // A temp directory inside a checkout must not make `root` look like part of it.
+        .env("GIT_CEILING_DIRECTORIES", root.parent().unwrap())
         .arg("-C")
         .arg(root)
         .args(head)
@@ -133,6 +135,13 @@ fn success_is_0() {
     let report = fx.report();
     let output = fx.diff(&["--report", path(&report), "--fail-under-patch", "50"]);
     assert_eq!(code(&output), 0, "{}", stderr(&output));
+    let output = fx.diff(&["--report", path(&report), "--branch-coverage"]);
+    assert_eq!(
+        code(&output),
+        0,
+        "lcov supports --branch-coverage: {}",
+        stderr(&output)
+    );
 }
 
 #[test]
@@ -183,14 +192,6 @@ fn usage_errors_are_2() {
     assert_eq!(code(&fx.diff(&[])), 2);
     // From a flag combination the parser cannot check.
     let report = fx.report();
-    let output = fx.diff(&[
-        "--report",
-        path(&report),
-        "--branch-coverage",
-        "--report-format",
-        "lcov",
-    ]);
-    assert_eq!(code(&output), 0, "lcov supports --branch-coverage");
     let go = fx.file("go.cover", "mode: set\nexample.com/m/a.go:1.1,2.2 1 1\n");
     let output = fx.diff(&["--report", path(&go), "--branch-coverage"]);
     assert_eq!(code(&output), 2, "{}", stderr(&output));

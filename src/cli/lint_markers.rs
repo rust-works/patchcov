@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use clap::Parser;
 use git2::Repository;
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
@@ -99,7 +99,7 @@ impl LintMarkersCommand {
             }
         }
         if failed {
-            return Err(anyhow!("coverage marker lint failed")).classify(ExitKind::Marker);
+            return Err(ExitKind::Marker.error("coverage marker lint failed"));
         }
         Ok(())
     }
