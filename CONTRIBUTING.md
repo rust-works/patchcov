@@ -86,12 +86,12 @@ RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --document-private-items
 Install the MSRV toolchain with `rustup toolchain install 1.88.0 --profile minimal` if needed.
 CI also runs tests on Linux, macOS, and Windows.
 
-`lint-markers` runs in CI's `Lint` job. This repository's
-[`.patchcov/config.yaml`](.patchcov/config.yaml) limits it to Rust sources, so prose that
-describes the marker syntax is not flagged.
+`lint-markers` also runs in CI's `Lint` job. This repository's
+[`.patchcov/config.yaml`](.patchcov/config.yaml) limits it to Rust sources, so prose in
+documentation that describes the marker syntax is not flagged.
 
-If you changed documentation, also check that relative links and `#anchors` in
-`README.md`, `CONTRIBUTING.md` and `docs/` still resolve.
+If you changed documentation, check that relative links and `#anchors` in `README.md`,
+`CONTRIBUTING.md` and `docs/` still resolve; CI does not.
 
 ## Merging
 
