@@ -293,13 +293,16 @@ fn git_failures_are_6() {
 }
 
 #[test]
-fn a_path_mismatch_is_7_only_when_asked() {
+fn a_path_mismatch_is_7_unless_allowed() {
     let fx = Fixture::new();
     let report = fx.file(
         "elsewhere.lcov",
         "SF:nowhere/else.rs\nDA:1,1\nend_of_record\n",
     );
     let output = fx.diff(&["--report", path(&report)]);
+    assert_eq!(code(&output), 7, "{}", stderr(&output));
+
+    let output = fx.diff(&["--report", path(&report), "--allow-path-mismatch"]);
     assert_eq!(
         code(&output),
         0,
@@ -307,9 +310,6 @@ fn a_path_mismatch_is_7_only_when_asked() {
         stderr(&output)
     );
     assert!(stderr(&output).contains("warning:"), "{}", stderr(&output));
-
-    let output = fx.diff(&["--report", path(&report), "--fail-on-path-mismatch"]);
-    assert_eq!(code(&output), 7, "{}", stderr(&output));
 }
 
 #[test]
