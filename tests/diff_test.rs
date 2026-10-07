@@ -492,11 +492,12 @@ fn foreign_runner_paths_warn_and_strict_mode_fails() -> Result<()> {
 #[test]
 fn default_base_resolves_a_master_default_branch() -> Result<()> {
     let mut repo = TestRepo::new()?;
+    // Commit on `work`, never the host's `init.defaultBranch`, so `master` is the
+    // only default-branch candidate and it stays at the base.
+    repo.repo.set_head("refs/heads/work")?;
     let base = repo.commit("base", &[("a.rs", "one\n")])?;
     repo.repo
         .reference("refs/heads/master", base, true, "default branch")?;
-    // Work on another branch so `master` stays at the base.
-    repo.repo.set_head("refs/heads/work")?;
     repo.commit("head", &[("a.rs", "one\ntwo\nthree\n")])?;
     let report = repo.repo_path.join("head.lcov");
     fs::write(&report, "SF:a.rs\nDA:2,1\nDA:3,0\nend_of_record\n")?;

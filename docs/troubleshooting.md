@@ -100,7 +100,7 @@ It fails with one of:
 
 ```text
 Error: could not resolve a default base ref (tried `refs/remotes/origin/HEAD`, `origin/main`, `main`, `origin/master`, `master`); pass --base-ref
-Error: could not compute merge-base of base branch and HEAD
+Error: could not compute merge-base of `origin/main` and HEAD
 ```
 
 Both mean the history needed to find the common ancestor is not in the checkout. The usual

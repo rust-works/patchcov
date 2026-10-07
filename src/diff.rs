@@ -255,12 +255,11 @@ pub fn default_base_ref(repo: &Repository) -> Result<String> {
         .peel_to_commit()
         .context("HEAD is not a commit")?
         .id();
-    let branch = DEFAULT_BASE_CANDIDATES
+    let (name, branch) = DEFAULT_BASE_CANDIDATES
         .iter()
         .find_map(|name| {
-            repo.revparse_single(name)
-                .ok()
-                .and_then(|object| object.peel_to_commit().ok())
+            let commit = repo.revparse_single(name).ok()?.peel_to_commit().ok()?;
+            Some((name, commit.id()))
         })
         .with_context(|| {
             format!(
@@ -269,11 +268,10 @@ pub fn default_base_ref(repo: &Repository) -> Result<String> {
                     .map(|name| format!("`{name}`"))
                     .join(", ")
             )
-        })?
-        .id();
+        })?;
     let base = repo
         .merge_base(branch, head)
-        .context("could not compute merge-base of base branch and HEAD")?;
+        .with_context(|| format!("could not compute merge-base of `{name}` and HEAD"))?;
     Ok(base.to_string())
 }
 

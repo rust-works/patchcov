@@ -101,7 +101,7 @@ rebase after measuring, measure again. See
 The default base is a **merge base**: the commit where your branch left the default branch, so
 the diff is exactly what your branch added, however far that branch has moved since.
 
-The default branch is the first of these refs that exists:
+The default branch is the first of these refs that resolves to a commit:
 
 1. `refs/remotes/origin/HEAD`, the remote's default branch, which `git clone` sets
 2. `origin/main`, then `main`
@@ -109,8 +109,10 @@ The default branch is the first of these refs that exists:
 
 So a repository whose default branch is `develop` or a release branch needs no flag once
 `origin/HEAD` points at it (`git remote set-head origin --auto` sets it). A repository with no
-`origin/HEAD`, such as one created by `git init` and `git remote add`, resolves exactly as
-before. Where `origin/HEAD` and `origin/main` both exist but differ, `origin/HEAD` wins. A
+`origin/HEAD` and a `main` or `origin/main` resolves as it always did. Where `origin/HEAD` and
+`origin/main` both exist but differ, `origin/HEAD` wins. `origin/HEAD` is a local record that
+`git fetch` does not update, so after the remote renames its default branch run
+`git remote set-head origin --auto`. A
 branch that is not the default (a stacked PR, a long-lived release branch) still needs
 `--base-ref`.
 
