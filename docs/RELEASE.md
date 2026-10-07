@@ -3,18 +3,22 @@
 Releases are driven by [release-plz](https://release-plz.dev) from the
 [conventional commits](https://www.conventionalcommits.org) on `main`.
 [`.github/workflows/release-plz.yml`](../.github/workflows/release-plz.yml) runs on
-every push to `main`.
+every push to `main`, including merge commits created by the
+[merge queue](../CONTRIBUTING.md#merging). Release jobs run after the merge, not
+on `merge_group`, and are not required queue checks.
 
 ## The flow
 
-1. **Merge changes** with conventional commit messages (`feat:`, `fix:`, …). Below
-   1.0, a `feat` raises the minor version and a `fix` the patch version; a breaking
+1. **Queue changes** with **Merge when ready** and conventional commit messages
+   (`feat:`, `fix:`, …). Below 1.0, a `feat` raises the minor version and a `fix` the
+   patch version; a breaking
    change (`feat!:` or a `BREAKING CHANGE:` footer) also raises the minor version.
 2. **release-plz opens (and keeps updating) a release PR** that bumps the version in
    `Cargo.toml` and `Cargo.lock` and writes the new section of `CHANGELOG.md`. It also
    runs `cargo-semver-checks` and fails the PR if the public API broke without a
-   matching bump. Edit the PR's changelog text if you want to; merge it when you want
-   to release.
+   matching bump. Edit the PR's changelog text if you want to; select **Merge when
+   ready** when you want to release. Release PRs must pass the same CI and queue
+   checks as other PRs.
 3. **Merging the release PR releases.** On the push to `main`, the `release` job
    publishes the crate to crates.io, pushes the `vX.Y.Z` tag on the merged commit
    (rebased or not, so there is no rebased-SHA problem) and creates the GitHub
@@ -70,9 +74,11 @@ These need a repository admin and cannot be done from a workflow.
 4. **Without the token: allow Actions to open PRs.** Repository settings → Actions →
    General → Workflow permissions → enable *Allow GitHub Actions to create and approve
    pull requests*. The `pr` job then falls back to `GITHUB_TOKEN`, and the release PR
-   has no CI checks, so run `cargo test` on it yourself before merging. This is not
-   needed when `RELEASE_PLZ_TOKEN` is set, and the `rust-works` organization policy
-   currently forbids it.
+   has no CI checks and cannot enter the merge queue. Configure `RELEASE_PLZ_TOKEN`
+   and close/reopen the release PR with a user or app token to trigger CI before
+   selecting **Merge when ready**. Local tests do not satisfy required checks.
+   This setting is not needed when `RELEASE_PLZ_TOKEN` is set, and the `rust-works`
+   organization policy currently forbids it.
 
 ## If a release goes wrong
 
