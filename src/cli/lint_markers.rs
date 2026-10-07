@@ -2,12 +2,13 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use git2::Repository;
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 
 use super::diff::load_coverage_config;
+use super::exit::{Classify, ExitKind};
 use crate::config::resolve_config_dir_at;
 use crate::markers;
 
@@ -38,10 +39,12 @@ impl LintMarkersCommand {
     /// Checks each selected file's working-tree contents.
     pub fn execute(self, repo_path: Option<&Path>) -> Result<()> {
         let repo = Repository::discover(repo_path.unwrap_or_else(|| Path::new(".")))
-            .context("could not find a Git repository for coverage marker lint")?;
+            .context("could not find a Git repository for coverage marker lint")
+            .classify(ExitKind::Git)?;
         let root = repo
             .workdir()
-            .context("coverage marker lint requires a Git working tree")?;
+            .context("coverage marker lint requires a Git working tree")
+            .classify(ExitKind::Git)?;
         let tracked = self.paths.is_empty();
         let paths = if tracked {
             let (patterns, origin) = if self.include.is_empty() {
@@ -53,7 +56,10 @@ impl LintMarkersCommand {
                 (self.include, "--include")
             };
             let include = compile_include(&patterns, origin)?;
-            let selected = select_tracked(tracked_paths(&repo)?, include.as_ref());
+            let selected = select_tracked(
+                tracked_paths(&repo).classify(ExitKind::Git)?,
+                include.as_ref(),
+            );
             if include.is_some() && selected.is_empty() {
                 // A typo in a glob must not look like a clean scan.
                 eprintln!(
@@ -79,7 +85,8 @@ impl LintMarkersCommand {
                 continue;
             }
             let bytes = std::fs::read(&file)
-                .with_context(|| format!("could not read {}", file.display()))?;
+                .with_context(|| format!("could not read {}", file.display()))
+                .classify(ExitKind::Other)?;
             // Binary (non-UTF-8) content is never flagged: it can only fail to
             // find a marker, which is what `patchcov diff` assumes of it too.
             let Ok(source) = String::from_utf8(bytes) else {
@@ -92,7 +99,7 @@ impl LintMarkersCommand {
             }
         }
         if failed {
-            bail!("coverage marker lint failed");
+            return Err(anyhow!("coverage marker lint failed")).classify(ExitKind::Marker);
         }
         Ok(())
     }
@@ -121,12 +128,16 @@ fn compile_include(patterns: &[String], origin: &str) -> Result<Option<GlobSet>>
         let glob = GlobBuilder::new(pattern)
             .literal_separator(true)
             .build()
-            .with_context(|| format!("invalid glob `{pattern}` in {origin}"))?;
+            .with_context(|| format!("invalid glob `{pattern}` in {origin}"))
+            .classify(ExitKind::Config)?;
         builder.add(glob);
     }
-    Ok(Some(builder.build().with_context(|| {
-        format!("could not compile the globs in {origin}")
-    })?))
+    Ok(Some(
+        builder
+            .build()
+            .with_context(|| format!("could not compile the globs in {origin}"))
+            .classify(ExitKind::Config)?,
+    ))
 }
 
 /// Keeps the paths the include set admits (all of them when there is none).

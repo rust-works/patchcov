@@ -1,6 +1,7 @@
 //! The `patchcov` command line.
 
 pub(crate) mod diff;
+pub mod exit;
 pub(crate) mod lint_markers;
 pub(crate) mod merge;
 
