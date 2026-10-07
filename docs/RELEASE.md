@@ -18,8 +18,8 @@ every push to `main`.
 3. **Merging the release PR releases.** On the push to `main`, the `release` job
    publishes the crate to crates.io, pushes the `vX.Y.Z` tag on the merged commit
    (rebased or not, so there is no rebased-SHA problem) and creates the GitHub
-   release. The `binaries` job then builds `patchcov` for four targets and uploads the
-   `.tar.gz` archives and `.sha256` files to that release.
+   release. The `binaries` job then builds `patchcov` for five targets and uploads the
+   `.tar.gz` (Linux/macOS) or `.zip` (Windows) archives and `.sha256` files to that release.
 
 | Target | Runner | Notes |
 |---|---|---|
@@ -27,6 +27,10 @@ every push to `main`.
 | `aarch64-unknown-linux-gnu` | `ubuntu-22.04-arm` | needs glibc 2.35 or newer |
 | `aarch64-apple-darwin` | `macos-latest` | |
 | `x86_64-apple-darwin` | `macos-latest` | cross-compiled |
+| `x86_64-pc-windows-msvc` | `windows-latest` | ZIP containing `patchcov.exe` |
+
+Each archive contains the executable, LICENSE and README.md. The Windows job
+extracts its ZIP and runs `patchcov.exe --version` before uploading it.
 
 The Linux jobs fail if the binary needs a glibc symbol newer than the floor
 (`GLIBC_FLOOR` in the workflow), so a runner-image change is a failed release build

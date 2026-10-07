@@ -59,9 +59,11 @@ jobs:
           - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu }
           - { os: macos-latest, target: aarch64-apple-darwin }
           - { os: macos-latest, target: x86_64-apple-darwin }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc }
     env:
       GLIBC_FLOOR: GLIBC_2.35
       TAG: ${{ fromJSON(needs.release.outputs.releases)[0].tag }}
+      ARCHIVE_EXT: ${{ matrix.target == 'x86_64-pc-windows-msvc' && 'zip' || 'tar.gz' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -85,18 +87,35 @@ jobs:
             echo "::error::$bin needs $highest, above the floor $GLIBC_FLOOR"
             exit 1
           fi
-      - name: Package
+      - name: Package Unix
+        if: ${{ runner.os != 'Windows' }}
+        shell: bash
         run: |
           name=patchcov-${TAG}-${{ matrix.target }}
           mkdir "$name"
           cp target/${{ matrix.target }}/release/patchcov LICENSE README.md "$name"/
           tar -czf "$name.tar.gz" "$name"
           shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+      - name: Package Windows
+        if: ${{ runner.os == 'Windows' }}
+        shell: pwsh
+        run: |
+          $name = "patchcov-$env:TAG-${{ matrix.target }}"
+          New-Item -ItemType Directory -Path $name | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/patchcov.exe", LICENSE, README.md -Destination $name
+          $archive = "$name.zip"
+          Compress-Archive -Path $name -DestinationPath $archive
+          $hash = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+          "$hash  $archive" | Set-Content -Encoding ascii "$archive.sha256"
+          Expand-Archive -Path $archive -DestinationPath package-check
+          & "./package-check/$name/patchcov.exe" --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload to the release
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          archive="patchcov-${TAG}-${{ matrix.target }}.tar.gz"
+          archive="patchcov-${TAG}-${{ matrix.target }}.${ARCHIVE_EXT}"
           gh release upload "$TAG" "$archive" "$archive.sha256" --clobber
 
   pr:

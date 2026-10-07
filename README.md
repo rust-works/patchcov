@@ -23,8 +23,11 @@ new lines are not, and whether anything moved on code the change did not touch.
 cargo install patchcov
 ```
 
-Prebuilt binaries for Linux (glibc 2.35 or newer) and macOS are attached to each
-[GitHub release](https://github.com/rust-works/patchcov/releases).
+Prebuilt binaries for Linux (glibc 2.35 or newer), macOS and Windows (x86_64 MSVC)
+are attached to each [GitHub release](https://github.com/rust-works/patchcov/releases),
+along with SHA-256 checksums. Linux and macOS builds use `.tar.gz` archives; Windows
+builds use `patchcov-v<version>-x86_64-pc-windows-msvc.zip`. Extract the Windows ZIP
+and add the directory containing `patchcov.exe` to your `PATH`.
 
 ## Use
 

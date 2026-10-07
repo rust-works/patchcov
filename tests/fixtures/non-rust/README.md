@@ -70,3 +70,9 @@ filenames are retained; they are data fixtures rather than copied source code.
   explicit root mapping. The original XML `version="1.9"` identifies the
   report schema, not a known coverlet release. Upstream ReportGenerator is
   Apache-2.0.
+
+## Synthetic path regression
+
+- `windows.lcov`: a hand-written two-line report (one covered, one uncovered)
+  with `SF:C:\agent\project\src\calc.cs`. This fixture tests drive-letter and
+  backslash path mapping through the CLI on every CI platform, including Windows.
