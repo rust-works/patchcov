@@ -123,7 +123,6 @@ implicit head uses the git index; an explicit `--head-ref` uses that revision's
 tree, and the baseline uses the base tree. Empty reports retain their existing
 behavior.
 
-
 One strip prefix applies to both head and baseline. If they came from different
 roots, map each root explicitly instead:
 

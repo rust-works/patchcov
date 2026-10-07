@@ -2387,6 +2387,32 @@ mod tests {
     }
 
     #[test]
+    fn baseline_warning_samples_at_most_three_paths() {
+        let (_dir, repo, base) = repo_with_added_file();
+        let baseline = repo.join("baseline.lcov");
+        let mut content = String::new();
+        for path in ["wrong/a.rs", "wrong/b.rs", "wrong/c.rs", "wrong/d.rs"] {
+            content.push_str(&format!("SF:{path}\nDA:1,1\nend_of_record\n"));
+        }
+        fs::write(&baseline, content).unwrap();
+        let mut cmd = command(write_head_lcov(&repo), &base);
+        cmd.baseline_report = Some(baseline);
+        let outcome = cmd.run(Some(&repo)).unwrap();
+        assert_eq!(outcome.warnings.len(), 1);
+        let warning = &outcome.warnings[0];
+        for text in [
+            "baseline.lcov",
+            "4 file path(s)",
+            "wrong/a.rs",
+            "wrong/b.rs",
+            "wrong/c.rs",
+        ] {
+            assert!(warning.contains(text), "{warning}");
+        }
+        assert!(!warning.contains("wrong/d.rs"), "{warning}");
+    }
+
+    #[test]
     fn tracked_files_with_external_paths_and_exclusions_are_quiet() {
         let (_dir, repo, base) = repo_with_added_file();
         let report = repo.join("mixed.lcov");

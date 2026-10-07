@@ -14,10 +14,10 @@ use super::model::CoverageReport;
 /// Runs every per-shard check on a freshly parsed `report`, before path
 /// filtering and before `prefix` is stripped.
 ///
-/// This is the one place a shard is judged, shared by `patchcov diff` (with more
-/// than one `--report`) and `patchcov merge`, so the two cannot drift: a shard
-/// with no executable lines is an error, and one measured under another root is
-/// noted in `warnings` when `prefix` is known.
+/// Used by `patchcov merge`: a shard with no executable lines is an error,
+/// and one measured under another root is noted in `warnings` when `prefix`
+/// is known. `patchcov diff` shares the executable-line check but validates
+/// normalized paths against tracked repository files instead.
 pub fn check_shard(
     label: &str,
     report: &CoverageReport,
