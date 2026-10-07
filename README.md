@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/patch.svg" alt="Patch, the patchcov hermit crab, mending a hole in its quilted shell" width="200">
+</p>
+
 # patchcov
 
 Patch coverage for git diffs. `patchcov` attributes a per-line coverage report to a

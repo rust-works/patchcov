@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="Patch, the patchcov hermit crab">
+  <defs>
+    <clipPath id="shell">
+      <path d="M40 152 C18 112 32 58 80 44 C124 32 168 52 176 98 C182 130 168 162 138 172 L62 176 C50 172 44 164 40 152 Z"/>
+    </clipPath>
+  </defs>
+  <!-- ground shadow -->
+  <ellipse cx="132" cy="226" rx="96" ry="10" fill="#000" opacity="0.12"/>
+  <!-- shell -->
+  <g clip-path="url(#shell)">
+    <g transform="rotate(-14 100 110)">
+      <rect x="0" y="0" width="260" height="260" fill="#3E6FA8"/>
+      <rect x="40" y="30" width="38" height="38" fill="#5DBB63"/>
+      <rect x="116" y="30" width="38" height="38" fill="#8FD18F"/>
+      <rect x="78" y="68" width="38" height="38" fill="#8FD18F"/>
+      <rect x="154" y="68" width="38" height="38" fill="#5DBB63"/>
+      <rect x="40" y="106" width="38" height="38" fill="#8FD18F"/>
+      <rect x="116" y="106" width="38" height="38" fill="#5DBB63"/>
+      <rect x="2" y="68" width="38" height="38" fill="#5DBB63"/>
+      <rect x="78" y="144" width="38" height="38" fill="#5DBB63"/>
+      <rect x="2" y="144" width="38" height="38" fill="#8FD18F"/>
+      <rect x="154" y="144" width="38" height="38" fill="#8FD18F"/>
+      <g stroke="#F6EBD3" stroke-width="2.5" stroke-dasharray="5 4">
+        <path d="M0 30 H260 M0 68 H260 M0 106 H260 M0 144 H260 M0 182 H260"/>
+        <path d="M2 0 V260 M40 0 V260 M78 0 V260 M116 0 V260 M154 0 V260 M192 0 V260"/>
+      </g>
+    </g>
+    <!-- frayed tear -->
+    <path d="M100 86 C104 72 120 64 134 70 C146 76 146 92 136 100 C124 108 104 104 100 86 Z" fill="#1E2A3A" stroke="#F6EBD3" stroke-width="2.5" stroke-dasharray="3 2"/>
+    <g stroke="#F6EBD3" stroke-width="2" stroke-linecap="round"><path d="M103 80 l-6 -3 M108 72 l-3 -6 M118 67 l1 -6 M140 80 l6 -2 M138 97 l5 4 M122 105 l1 6 M106 99 l-5 4"/></g>
+  </g>
+  <path d="M40 152 C18 112 32 58 80 44 C124 32 168 52 176 98 C182 130 168 162 138 172 L62 176 C50 172 44 164 40 152 Z" fill="none" stroke="#2B2118" stroke-width="5"/>
+  <!-- shell apex -->
+  <circle cx="58" cy="60" r="19" fill="#6C97C9" stroke="#2B2118" stroke-width="5"/>
+  <path d="M58 60 C62 56 66 62 62 66 C56 70 48 64 50 56 C52 46 66 44 72 52" fill="none" stroke="#2B2118" stroke-width="3.5" stroke-linecap="round"/>
+  <!-- legs -->
+  <g stroke="#2B2118" stroke-width="11" stroke-linecap="round" fill="none">
+    <path d="M150 192 l-8 26" /><path d="M166 196 l-2 26"/><path d="M182 194 l6 24"/><path d="M196 188 l12 22"/>
+  </g>
+  <g stroke="#E8672A" stroke-width="5" stroke-linecap="round" fill="none">
+    <path d="M150 192 l-8 26" /><path d="M166 196 l-2 26"/><path d="M182 194 l6 24"/><path d="M196 188 l12 22"/>
+  </g>
+  <!-- body -->
+  <ellipse cx="172" cy="172" rx="40" ry="28" fill="#E8672A" stroke="#2B2118" stroke-width="4"/>
+  <!-- eye stalks -->
+  <g stroke="#2B2118" stroke-width="9" stroke-linecap="round"><path d="M164 152 L158 116"/><path d="M184 152 L192 118"/></g>
+  <g stroke="#E8672A" stroke-width="4" stroke-linecap="round"><path d="M164 150 L158 118"/><path d="M184 150 L192 120"/></g>
+  <circle cx="157" cy="108" r="12" fill="#fff" stroke="#2B2118" stroke-width="4"/>
+  <circle cx="193" cy="110" r="12" fill="#fff" stroke="#2B2118" stroke-width="4"/>
+  <circle cx="160" cy="109" r="5" fill="#2B2118"/><circle cx="196" cy="111" r="5" fill="#2B2118"/>
+  <circle cx="162" cy="107" r="1.6" fill="#fff"/><circle cx="198" cy="109" r="1.6" fill="#fff"/>
+  <!-- face -->
+  <path d="M168 172 Q178 182 190 172" fill="none" stroke="#2B2118" stroke-width="3.5" stroke-linecap="round"/>
+  <ellipse cx="160" cy="168" rx="5" ry="3" fill="#F49A6B"/><ellipse cx="198" cy="168" rx="5" ry="3" fill="#F49A6B"/>
+  <!-- red thread from hole to needle -->
+  <path d="M136 72 C156 54 180 40 214 52 C232 58 236 72 228 84" fill="none" stroke="#E23B3B" stroke-width="3" stroke-linecap="round"/>
+  <!-- right claw + needle -->
+  <path d="M206 160 C222 150 228 136 224 124" fill="none" stroke="#2B2118" stroke-width="10" stroke-linecap="round"/>
+  <path d="M206 160 C222 150 228 136 224 124" fill="none" stroke="#E8672A" stroke-width="5" stroke-linecap="round"/>
+  <line x1="208" y1="130" x2="240" y2="70" stroke="#2B2118" stroke-width="7" stroke-linecap="round"/>
+  <line x1="208" y1="130" x2="240" y2="70" stroke="#D9DEE5" stroke-width="3.5" stroke-linecap="round"/>
+  <ellipse cx="236" cy="78" rx="1.6" ry="4" transform="rotate(28 236 78)" fill="#2B2118"/>
+  <path d="M214 122 C204 116 206 102 216 100 C226 102 228 114 222 120 Z" fill="#E8672A" stroke="#2B2118" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M226 128 C236 124 238 112 230 108" fill="#E8672A" stroke="#2B2118" stroke-width="4" stroke-linecap="round"/>
+  <!-- left claw + spool -->
+  <g transform="translate(96 196)">
+    <rect x="-14" y="-12" width="28" height="24" rx="3" fill="#5DBB63" stroke="#2B2118" stroke-width="4"/>
+    <g stroke="#2E7D3A" stroke-width="2"><path d="M-12 -5 H12 M-12 1 H12 M-12 7 H12"/></g>
+    <rect x="-20" y="-18" width="40" height="7" rx="3" fill="#C98B4E" stroke="#2B2118" stroke-width="4"/>
+    <rect x="-20" y="11" width="40" height="7" rx="3" fill="#C98B4E" stroke="#2B2118" stroke-width="4"/>
+  </g>
+  <path d="M140 188 C130 196 124 200 116 198" fill="none" stroke="#2B2118" stroke-width="10" stroke-linecap="round"/>
+  <path d="M140 188 C130 196 124 200 116 198" fill="none" stroke="#E8672A" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="116" cy="198" r="9" fill="#E8672A" stroke="#2B2118" stroke-width="4"/>
+</svg>
