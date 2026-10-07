@@ -50,6 +50,33 @@ The full guide is in [docs/usage.md](docs/usage.md): input formats and path mapp
 for non-Rust languages, gating semantics, sharded runs, the ignore list, source
 markers and the flag reference.
 
+## GitHub Action
+
+[action-works/patchcov-action](https://github.com/action-works/patchcov-action) runs
+`patchcov` in a pull-request workflow. It installs a cached `patchcov` binary, runs
+`cargo-llvm-cov` (or takes a report you produced in any language), posts a sticky PR
+comment with patch coverage and the uncovered new lines, publishes the baseline on
+`main` and applies the gates after the comment posts. It also combines the reports
+of sharded runs.
+
+```yaml
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write        # to post the coverage comment
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # full history so the merge base resolves
+      - uses: action-works/patchcov-action@v1
+        with:
+          fail-under-patch: 80
+```
+
+See the action's README for thin mode, sharded runs and its inputs.
+
 ## Configuration
 
 Settings that belong to a repository live in `.patchcov/config.yaml`, found by
