@@ -268,6 +268,11 @@ fn producer_fixture(
 }
 
 #[test]
+fn windows_runner_root_patch_attribution() -> Result<()> {
+    producer_fixture("windows.lcov", "src/calc.cs", r"C:\agent\project", "", 1, 2)
+}
+
+#[test]
 fn nyc_monorepo_patch_attribution() -> Result<()> {
     producer_fixture(
         "nyc.lcov",
