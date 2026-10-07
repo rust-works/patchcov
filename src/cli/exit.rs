@@ -30,7 +30,7 @@ pub enum ExitKind {
     Config = 5,
     /// Git could not answer: no repository, an unresolvable ref, no merge base.
     Git = 6,
-    /// A report's paths match no tracked file, with `--fail-on-path-mismatch`.
+    /// A report's paths match no tracked file, unless `--allow-path-mismatch` is set.
     PathMismatch = 7,
     /// Any other runtime failure, such as an I/O error writing the output.
     Other = 8,

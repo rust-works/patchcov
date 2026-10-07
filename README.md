@@ -219,9 +219,10 @@ the code at `HEAD` (or at `--head-ref`). A report measured on older code gives l
 that no longer match the diff, and patchcov cannot tell: the result is silently wrong. The
 merge base must also resolve, which needs full git history in CI (`fetch-depth: 0`).
 
-The command prints the report to stdout and exits `0`, or `1` when a gate or anything else
-fails (and `2` for a usage error), so a CI job can post the comment and then fail. See the
-[exit codes](docs/reference.md#exit-codes).
+The command prints the report to stdout and exits `0`, or `1` when a gate fails, so a CI job
+can post the comment and then fail. Other failures have their own codes (`2` usage, `3` report,
+`4` marker, `5` config, `6` git, `7` path mismatch, `8` other), so a script can tell a failed
+gate from an unreadable report. See the [exit codes](docs/reference.md#exit-codes).
 
 Where to go next:
 

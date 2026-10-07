@@ -78,24 +78,39 @@ of `-o/--output` that prints a warning. `--fail-on-path-mismatch` is a hidden, d
 
 ## Exit codes
 
-`patchcov` uses three exit codes. Every failure that is not a usage error is `1`, so tell
-the causes apart by the message on stderr (the last line starts with `Error:`). The report
-itself, on stdout, is still printed when a *gate* fails, so a CI job can post it first.
+Each class of failure has its own exit code, so a script can tell a failed gate from an
+unreadable report without parsing stderr. The message on stderr is unchanged (its last line
+starts with `Error:`). The report itself, on stdout, is still printed when a *gate* fails, so
+a CI job can post it first.
 
 | Code | Meaning | Examples (stderr) |
 |-----:|---------|-------------------|
 | `0` | Success. The report was printed and no gate failed. Warnings on stderr (a path mismatch you allowed, a lint glob that matched nothing) do not change it | |
 | `1` | A **gate failed** (`diff`) | `patch coverage 61.11% is below the --fail-under-patch threshold of 80.00%`<br>`line coverage 75.00% is below the --fail-under-lines threshold of 100.00%`<br>`the report has no executable lines, so the --fail-under-lines threshold of 50.00% cannot be met`<br>`touched files absent from every coverage report (--fail-on-unmeasured / diff.require-measured): src/a.rs`. Every failed gate is named, joined by `;` |
-| `1` | A **path mismatch** (`diff`): a nonempty report has no path matching a tracked file. With `--allow-path-mismatch` or `diff.allow-path-mismatch` it is only a warning | `coverage report <path>: none of its N file path(s) matches a tracked file in the repository; unmatched normalized paths: ...; use --strip-prefix or diff.path-mappings to make paths repo-relative (or pass --allow-path-mismatch / set diff.allow-path-mismatch to warn instead)` |
-| `1` | A **report is unreadable, empty or unparseable** (`diff`, `merge`) | `could not read coverage report ./missing.lcov: No such file or directory`<br>`could not parse coverage report ./empty.lcov: coverage report format auto-detection failed: coverage report is empty; cannot detect format`<br>`coverage shard <path> has no executable lines` (several `--report`, or any `merge` input) |
-| `1` | A **source marker is malformed** (`lint-markers`, and `diff` for files in the report) | ``src/m.rs:1: `patchcov: coverage ignore` needs a reason (write ...)``<br>`coverage marker lint failed` |
-| `1` | **Config is bad** | `could not parse coverage config ./.patchcov/config.yaml: ...` (malformed YAML, wrong type, a misspelled `path-mappings` field)<br>`invalid ignore-filename-regex pattern`<br>`invalid glob ... in --fail-on-unmeasured / diff.require-measured` |
-| `1` | **Git cannot answer** | `could not open git repository at ...`<br>`could not resolve base ref ...`<br>``could not resolve a default base ref (tried `refs/remotes/origin/HEAD`, `origin/main`, `main`, `origin/master`, `master`); pass --base-ref``<br>``could not compute merge-base of `<ref>` and HEAD`` |
-| `2` | **Usage error**, reported by the argument parser before anything runs | `the following required arguments were not provided: --report <PATH>`<br>`invalid value 'abc' for '--fail-under-patch <PCT>'`<br>`unrecognized subcommand` |
+| `2` | **Usage error**: reported by the argument parser before anything runs, or a combination of flags it cannot check | `the following required arguments were not provided: --report <PATH>`<br>`invalid value 'abc' for '--fail-under-patch <PCT>'`<br>`unrecognized subcommand`<br>`--branch-coverage supports only lcov and Cobertura reports: ./go.cover`<br>`-o/--output is the file to write, but `json` looks like an output format ...` (`merge`) |
+| `3` | A **report is unreadable, empty or unparseable** (`diff`, `merge`) | `could not read coverage report ./missing.lcov: No such file or directory`<br>`could not parse coverage report ./empty.lcov: coverage report format auto-detection failed: coverage report is empty; cannot detect format`<br>`coverage shard <path> has no executable lines` (several `--report`, or any `merge` input) |
+| `4` | A **source marker is malformed** (`lint-markers`, and `diff` for files in the report) | ``src/m.rs:1: `patchcov: coverage ignore` needs a reason (write ...)``<br>`coverage marker lint failed` |
+| `5` | **Config is bad** | `could not parse coverage config ./.patchcov/config.yaml: ...` (malformed YAML, wrong type, a misspelled `path-mappings` field)<br>`coverage path-mappings destination must be repo-relative without '..': ...`<br>`invalid ignore-filename-regex pattern`<br>`invalid glob ... in --fail-on-unmeasured / diff.require-measured` |
+| `6` | **Git cannot answer** | `could not open git repository at ...`<br>`could not resolve base ref ...`<br>``could not resolve a default base ref (tried `refs/remotes/origin/HEAD`, `origin/main`, `main`, `origin/master`, `master`); pass --base-ref``<br>``could not compute merge-base of `<ref>` and HEAD`` |
+| `7` | A **path mismatch** (`diff`): a nonempty report has no path matching a tracked file. With `--allow-path-mismatch` or `diff.allow-path-mismatch` it is only a warning | `coverage report <path>: none of its N file path(s) matches a tracked file in the repository; unmatched normalized paths: ...; use --strip-prefix or diff.path-mappings to make paths repo-relative (or pass --allow-path-mismatch / set diff.allow-path-mismatch to warn instead)` |
+| `8` | **Any other runtime error** | `could not write merged report to ./out/merged.lcov: No such file or directory`<br>`could not read <path> to scan for coverage markers` |
 
-Gate failures and every other runtime error share code `1`, so a script that needs to know
-which happened reads the last line of stderr. Distinct codes per cause would be a behaviour
-change and are not provided today.
+When one failure fits two rows, the most specific one wins: a config file that cannot be read
+is `5`, not `8`. A failure that no row names also exits `8`. A process killed by a signal
+exits with the shell's `128 + signal`, as usual.
+
+Up to and including 0.3.0, every runtime error, gate or not, exited `1`. A script that treated `1` as "a
+gate failed" keeps working. One that tested for `1` to mean "anything went wrong" should test
+for a non-zero status instead.
+
+```bash
+patchcov diff --report head.lcov --fail-under-patch 80 > coverage-comment.md
+case $? in
+  0) ;;                                       # passed
+  1) echo "coverage gate failed" ;;           # post the comment, then fail the job
+  *) echo "patchcov could not run" >&2 ;;     # no usable report; do not post
+esac
+```
 
 ## Output schema
 
