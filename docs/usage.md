@@ -52,7 +52,8 @@ see the [README](../README.md#what-it-prints).
 ## Quick start
 
 ```bash
-# 1. Produce a per-line report for the working tree (example: cargo-llvm-cov).
+# 1. Commit your changes, then produce a per-line report for that commit
+#    (example: cargo-llvm-cov). The diff is between committed trees.
 cargo llvm-cov --no-report      # instrument + run tests
 cargo llvm-cov report --lcov --output-path head.lcov
 
@@ -70,7 +71,8 @@ patchcov diff \
 ```
 
 **Measure the report at the revision you diff.** The report must come from a test run
-on the code at `--head-ref` (default `HEAD`, working tree included for source markers).
+on the code at `--head-ref` (default `HEAD`), with no uncommitted changes to files the diff
+touches.
 A report measured before you added or moved lines gives line numbers that no longer
 match the diff, and the result is silently wrong, not an error. If you commit or
 rebase after measuring, measure again. See
@@ -86,12 +88,34 @@ rebase after measuring, measure again. See
   `--report-format <auto|lcov|llvm-cov-json|cobertura|jacoco|go-coverprofile>`. Pass it
   once per shard to merge a [sharded run](#sharded-runs), or merge the shards into one
   file first with [`patchcov merge`](#merging-shards-into-one-file).
-- `--base-ref <REV>` / `--head-ref <REV>`: the revisions to diff. The default base is
-  the merge base of `origin/main` (or `main`) and `HEAD`; the default head is `HEAD`,
-  the revision the report was measured at.
+- `--base-ref <REV>` / `--head-ref <REV>`: the revisions to diff, as committed trees (see
+  [choosing the base](#choosing-the-base)). The default base is the merge base of
+  `origin/main` (or `main`) and `HEAD`; the default head is `HEAD`, the revision the report
+  was measured at.
 - `--baseline-report <PATH>` (+ `--baseline-report-format`): an optional *base-side*
   report. Supplying it enables the project-delta and indirect-change sections; without
   it you still get patch coverage and the uncovered-line list.
+
+### Choosing the base
+
+The default base is a **merge base**: the commit where your branch left `origin/main`, so the
+diff is exactly what your branch added, however far `main` has moved since.
+
+An explicit `--base-ref` is *not* turned into a merge base. patchcov compares that revision's
+tree directly with the head's, as `git diff <base> <head>` does. `--base-ref origin/main` on a
+branch that has fallen behind `main` therefore also counts everything that landed on `main`
+since, as lines your branch removed or reverted. Pass a revision that is already the right
+base:
+
+```bash
+# A branch checkout: the merge base of the PR's base branch and HEAD.
+patchcov diff --report head.lcov --base-ref "$(git merge-base origin/main HEAD)"
+```
+
+On a CI checkout of the PR's *merge commit* (the `pull_request` default in GitHub Actions),
+`HEAD` already contains the base branch's tip, so `--base-ref "origin/${GITHUB_BASE_REF}"` gives
+the PR's changes. Both diffs are between committed trees; uncommitted edits are not in
+them (only source markers are read from the working tree).
 
 ## Report paths and repository paths
 
@@ -785,6 +809,8 @@ A pull-request job needs three steps:
 3. Run `patchcov diff` and post its markdown as the PR comment, failing the job on the gates:
 
 ```bash
+# --base-ref as below is right on a pull_request merge-commit checkout; on a branch
+# checkout use --base-ref "$(git merge-base "origin/${GITHUB_BASE_REF}" HEAD)".
 patchcov diff \
   --report head.lcov --baseline-report base.lcov \
   --base-ref "origin/${GITHUB_BASE_REF}" \

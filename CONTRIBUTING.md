@@ -39,7 +39,8 @@ Unit tests sit beside the code in `#[cfg(test)]` modules. The integration tests 
 revision, and run the real analysis (`tests/diff_test.rs`) or the real binary
 (`tests/lint_markers_test.rs`). They need no network.
 
-To measure patchcov's own coverage, which is a good way to check a change is tested:
+To measure patchcov's own coverage, which is a good way to check a change is tested, commit
+first (the diff is between committed trees) and then:
 
 ```bash
 cargo llvm-cov --no-report

@@ -21,11 +21,13 @@
 //!
 //! # Example
 //!
-//! Attribute a coverage report to the changes since `origin/main`:
+//! Attribute a coverage report to the changes on the current branch:
 //!
 //! ```no_run
 //! use git2::Repository;
-//! use patchcov::{analyze, parse, render, DiffModel, DiffScope, OutputFormat, RenderOptions};
+//! use patchcov::{
+//!     analyze, default_base_ref, parse, render, DiffModel, DiffScope, OutputFormat, RenderOptions,
+//! };
 //!
 //! fn main() -> anyhow::Result<()> {
 //!     let repo = Repository::open(".")?;
@@ -37,8 +39,10 @@
 //!         head.strip_prefix(workdir);
 //!     }
 //!
-//!     // The lines added between a base revision and HEAD.
-//!     let diff = DiffModel::between(&repo, "origin/main", None)?;
+//!     // The lines added since the merge base of `origin/main` and HEAD, which is what
+//!     // `patchcov diff` uses by default. An explicit revision is compared directly.
+//!     let base = default_base_ref(&repo)?;
+//!     let diff = DiffModel::between(&repo, &base, None)?;
 //!
 //!     // Attribute coverage to the diff. Pass a baseline report instead of `None` for deltas.
 //!     let result = analyze(&head, &diff, None, DiffScope::DiffOnly);

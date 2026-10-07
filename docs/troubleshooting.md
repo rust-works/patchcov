@@ -38,7 +38,7 @@ four possible causes. Check them in this order:
 2. **The diff is empty because the base is the head.** On the default branch, or any branch
    with no commits beyond `origin/main`, the default base (the merge base of `origin/main` and
    `HEAD`) is `HEAD` itself. Pass `--base-ref` explicitly, for example `--base-ref HEAD~1` or
-   a commit SHA.
+   a commit SHA. **Uncommitted changes are not in the diff either**: commit them first.
 3. **The paths do not match.** Overall coverage is present but no changed file is found in the
    report. See [No files match the diff](#no-files-match-the-diff).
 4. **A filter removed the files.** When `--ignore-filename-regex` removed files the diff added
@@ -114,8 +114,10 @@ cause is a shallow clone: CI checkouts fetch a single commit by default.
 
 - **Other CI, or an existing shallow clone:** `git fetch --unshallow`, and make sure the base
   branch exists locally: `git fetch origin main`.
-- **A base that is not `main`** (a release branch, a stacked PR): pass it,
-  `--base-ref origin/release-1.2` or `--base-ref "origin/${GITHUB_BASE_REF}"`.
+- **A base that is not `main`** (a release branch, a stacked PR): pass a merge base,
+  `--base-ref "$(git merge-base origin/release-1.2 HEAD)"`. A bare `--base-ref origin/release-1.2`
+  is compared directly with `HEAD`, so it is only right when `HEAD` already contains that
+  branch's tip; see [choosing the base](usage.md#choosing-the-base).
 - **You already know the commit:** `--base-ref <sha>` needs no history beyond that commit.
 
 A bad explicit ref fails differently, naming it: `could not resolve base ref ...`.

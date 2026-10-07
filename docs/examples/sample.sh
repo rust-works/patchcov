@@ -7,6 +7,7 @@
 #   docs/examples/sample.sh json       # the same result as JSON
 #
 # Uses `patchcov` from PATH; set PATCHCOV=/path/to/patchcov to use another binary.
+# Needs git 2.28 or newer (`git init -b`).
 set -euo pipefail
 
 format="${1:-markdown}"
@@ -19,6 +20,8 @@ cd "$repo"
 git init -q -b main
 git config user.email sample@example.com
 git config user.name sample
+git config commit.gpgsign false
+git config core.hooksPath /dev/null
 
 # `lines <prefix> <from> <to>` writes placeholder source lines.
 lines() { for i in $(seq "$2" "$3"); do echo "let $1$i = $i;"; done; }

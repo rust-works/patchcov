@@ -34,7 +34,7 @@ everywhere.
 |------|---------|
 | `--report <PATH>` | Head coverage report (**required**); repeat once per shard to merge a [sharded run](usage.md#sharded-runs) |
 | `--report-format <FMT>` | Format of every `--report`: `auto` (default) \| `lcov` \| `llvm-cov-json` \| `cobertura` \| `jacoco` \| `go-coverprofile` |
-| `--base-ref <REV>` | Base revision (default: merge base of `origin/main`, else `main`, and `HEAD`) |
+| `--base-ref <REV>` | Base revision (default: merge base of `origin/main`, else `main`, and `HEAD`). An explicit revision is compared directly with the head, **not** via a merge base; see [choosing the base](usage.md#choosing-the-base) |
 | `--head-ref <REV>` | Head revision the report was measured at (default: `HEAD`) |
 | `--baseline-report <PATH>` | Base-side report; enables project deltas and indirect changes. Takes one report |
 | `--baseline-report-format <FMT>` | Format of `--baseline-report` (auto-detected by default); same values as `--report-format` |
