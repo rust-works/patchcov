@@ -36,7 +36,7 @@ four possible causes. Check them in this order:
    file, or edits to comments. Confirm with `git diff --stat <base>...HEAD` and, for a code
    change, look at `unmeasured_files`.
 2. **The diff is empty because the base is the head.** On the default branch, or any branch
-   with no commits beyond `origin/main`, the default base (the merge base of `origin/main` and
+   with no commits beyond the default branch, the default base (the merge base of that branch and
    `HEAD`) is `HEAD` itself. Pass `--base-ref` explicitly, for example `--base-ref HEAD~1` or
    a commit SHA. **Uncommitted changes are not in the diff either**: commit them first.
 3. **The paths do not match.** Overall coverage is present but no changed file is found in the
@@ -93,16 +93,20 @@ repository root, or pass `-C <repo>`: a relative `--report` path is resolved aga
 
 ## The merge base cannot be resolved
 
-Without `--base-ref`, patchcov diffs against the merge base of `origin/main` (or `main`) and
-`HEAD`. It fails with one of:
+Without `--base-ref`, patchcov diffs against the merge base of the default branch and `HEAD`.
+The default branch is the first of `refs/remotes/origin/HEAD`, `origin/main`, `main`,
+`origin/master`, `master` that exists (see [choosing the base](usage.md#choosing-the-base)).
+It fails with one of:
 
 ```text
-Error: could not resolve `origin/main` or `main` for the default base ref
+Error: could not resolve a default base ref (tried `refs/remotes/origin/HEAD`, `origin/main`, `main`, `origin/master`, `master`); pass --base-ref
 Error: could not compute merge-base of base branch and HEAD
 ```
 
 Both mean the history needed to find the common ancestor is not in the checkout. The usual
-cause is a shallow clone: CI checkouts fetch a single commit by default.
+cause is a shallow clone: CI checkouts fetch a single commit by default. The first error can
+also mean the default branch has another name and `origin/HEAD` is not set; run
+`git remote set-head origin --auto`, or fetch the branch and pass `--base-ref`.
 
 - **GitHub Actions:** check out with full history.
 

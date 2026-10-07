@@ -90,7 +90,7 @@ rebase after measuring, measure again. See
   file first with [`patchcov merge`](#merging-shards-into-one-file).
 - `--base-ref <REV>` / `--head-ref <REV>`: the revisions to diff, as committed trees (see
   [choosing the base](#choosing-the-base)). The default base is the merge base of
-  `origin/main` (or `main`) and `HEAD`; the default head is `HEAD`, the revision the report
+  the default branch and `HEAD`; the default head is `HEAD`, the revision the report
   was measured at.
 - `--baseline-report <PATH>` (+ `--baseline-report-format`): an optional *base-side*
   report. Supplying it enables the project-delta and indirect-change sections; without
@@ -98,8 +98,21 @@ rebase after measuring, measure again. See
 
 ### Choosing the base
 
-The default base is a **merge base**: the commit where your branch left `origin/main`, so the
-diff is exactly what your branch added, however far `main` has moved since.
+The default base is a **merge base**: the commit where your branch left the default branch, so
+the diff is exactly what your branch added, however far that branch has moved since.
+
+The default branch is the first of these refs that exists:
+
+1. `refs/remotes/origin/HEAD`, the remote's default branch, which `git clone` sets
+2. `origin/main`, then `main`
+3. `origin/master`, then `master`
+
+So a repository whose default branch is `develop` or a release branch needs no flag once
+`origin/HEAD` points at it (`git remote set-head origin --auto` sets it). A repository with no
+`origin/HEAD`, such as one created by `git init` and `git remote add`, resolves exactly as
+before. Where `origin/HEAD` and `origin/main` both exist but differ, `origin/HEAD` wins. A
+branch that is not the default (a stacked PR, a long-lived release branch) still needs
+`--base-ref`.
 
 An explicit `--base-ref` is *not* turned into a merge base. patchcov compares that revision's
 tree directly with the head's, as `git diff <base> <head>` does. `--base-ref origin/main` on a
