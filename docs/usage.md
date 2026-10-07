@@ -113,6 +113,16 @@ patchcov diff --report head.lcov \
   --strip-prefix /home/runner/work/project/project
 ```
 
+After path normalization, `diff` warns on stderr when a nonempty head report,
+shard, or baseline has zero paths matching tracked repository files. The warning
+names the report, samples up to three unmatched normalized paths, and suggests
+`--strip-prefix` or `diff.path-mappings`. Use `--fail-on-path-mismatch` to make
+this an error in CI. Any tracked-file match suppresses the warning, so reports
+may include SDK or vendor files. Validation happens before exclusions. An
+implicit head uses the git index; an explicit `--head-ref` uses that revision's
+tree, and the baseline uses the base tree. Empty reports retain their existing
+behavior.
+
 One strip prefix applies to both head and baseline. If they came from different
 roots, map each root explicitly instead:
 
@@ -532,14 +542,15 @@ result look slightly worse. With more than one `--report`:
 - a shard that is missing, unparseable, or has **no executable lines** fails the
   run, naming the shard (checked before `--ignore-filename-regex`, so a shard that
   only covers excluded files is not mistaken for a failed one);
-- a shard whose absolute paths **all** fall outside the `--strip-prefix` root draws
+- a shard whose normalized paths **all** fail to match tracked repository files draws
   a warning on stderr: it was probably measured under a different workspace root,
   and its files would key under paths that exist nowhere in the repository. A shard
   with some in-tree paths is left alone, because reports legitimately name a few
   out-of-tree files (the standard library, vendored sources).
 
-A single `--report` behaves exactly as it did before sharding existed: neither
-check applies to it.
+The tracked-path check also applies to a single `--report` and to the baseline.
+Use `--fail-on-path-mismatch` to turn its warning into an error. The empty-shard
+check remains specific to runs with multiple reports.
 
 **Limits.**
 
@@ -938,6 +949,7 @@ first with [`patchcov merge`](#merging-shards-into-one-file).
 | `--fail-under-lines <PCT>` | Exit non-zero when overall line coverage is below `<PCT>`, or the report has no executable lines |
 | `--collapse-ranges` | Collapse consecutive uncovered new lines into ranges |
 | `--all-files` | Report deltas/indirect changes for all files, not just touched ones |
+| `--fail-on-path-mismatch` | Fail if a nonempty report has no tracked-file matches after normalization |
 | `--strip-prefix <PATH>` | Prefix stripped from report paths to make them repo-relative |
 | `--ignore-filename-regex <REGEX>` | Exclude matching files from both reports (repeatable/comma-separated); unioned with `.patchcov/config.yaml` |
 | `--config-dir <PATH>` | Config dir searched for `config.yaml` (default: discovered `.patchcov/`, honoring `PATCHCOV_CONFIG_DIR`) |
