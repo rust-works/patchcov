@@ -106,7 +106,8 @@ pub struct DiffCommand {
     #[arg(long)]
     pub branch_coverage: bool,
 
-    /// Base revision to diff against (default: merge-base of `origin/main` and `HEAD`).
+    /// Base revision to diff against (default: merge-base of the default branch and `HEAD`:
+    /// `origin/HEAD`, else `origin/main`, `main`, `origin/master`, `master`).
     #[arg(long, value_name = "REV")]
     pub base_ref: Option<String>,
 
@@ -590,7 +591,7 @@ impl DiffCommand {
         let repo = Repository::open(&repo_path)
             .with_context(|| format!("could not open git repository at {}", repo_path.display()))?;
 
-        // Resolve the base ref (default: merge-base of origin/main and HEAD).
+        // Resolve the base ref (default: merge-base of the default branch and HEAD).
         let base_ref = match &self.base_ref {
             Some(r) => r.clone(),
             None => default_base_ref(&repo)?,

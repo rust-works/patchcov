@@ -486,3 +486,33 @@ fn foreign_runner_paths_warn_and_strict_mode_fails() -> Result<()> {
     assert!(output.stderr.is_empty());
     Ok(())
 }
+
+/// With no `--base-ref`, the real binary finds a base even when the repository's
+/// default branch is `master`: the patch is what `HEAD` added past it.
+#[test]
+fn default_base_resolves_a_master_default_branch() -> Result<()> {
+    let mut repo = TestRepo::new()?;
+    let base = repo.commit("base", &[("a.rs", "one\n")])?;
+    repo.repo
+        .reference("refs/heads/master", base, true, "default branch")?;
+    // Work on another branch so `master` stays at the base.
+    repo.repo.set_head("refs/heads/work")?;
+    repo.commit("head", &[("a.rs", "one\ntwo\nthree\n")])?;
+    let report = repo.repo_path.join("head.lcov");
+    fs::write(&report, "SF:a.rs\nDA:2,1\nDA:3,0\nend_of_record\n")?;
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_patchcov"))
+        .arg("-C")
+        .arg(&repo.repo_path)
+        .args(["diff", "-o", "json", "--report"])
+        .arg(&report)
+        .output()?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(json["patch_coverage"]["covered"], 1);
+    assert_eq!(json["patch_coverage"]["total"], 2);
+    Ok(())
+}

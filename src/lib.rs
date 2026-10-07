@@ -39,7 +39,7 @@
 //!         head.strip_prefix(workdir);
 //!     }
 //!
-//!     // The lines added since the merge base of `origin/main` and HEAD, which is what
+//!     // The lines added since the merge base of the default branch and HEAD, which is what
 //!     // `patchcov diff` uses by default. An explicit revision is compared directly.
 //!     let base = default_base_ref(&repo)?;
 //!     let diff = DiffModel::between(&repo, &base, None)?;
