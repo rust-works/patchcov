@@ -93,6 +93,10 @@ The analysis is a library as well as a command: `patchcov::parse` reads a report
 `patchcov::DiffModel` builds the added-line sets from `git2`, `patchcov::analyze`
 attributes coverage to the diff and `patchcov::render` formats the result.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for local checks and the merge queue flow.
+
 ## Releasing
 
 See [docs/RELEASE.md](docs/RELEASE.md).
