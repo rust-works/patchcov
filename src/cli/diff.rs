@@ -545,7 +545,16 @@ impl DiffCommand {
         // Preserve report presence before source markers can remove every line.
         let unmeasured_files = crate::analysis::unmeasured_files(&head, &diff, baseline.as_ref())
             .into_iter()
-            .filter(|path| ignore.as_ref().is_none_or(|set| !set.is_match(path)))
+            .filter(|path| {
+                ignore.as_ref().is_none_or(|set| {
+                    !set.is_match(path)
+                        && diff
+                            .files
+                            .get(path)
+                            .and_then(|file| file.old_path.as_ref())
+                            .is_none_or(|old| !set.is_match(old))
+                })
+            })
             .collect::<Vec<_>>();
         let unmeasured_failures = unmeasured_files
             .iter()

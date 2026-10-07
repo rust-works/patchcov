@@ -386,3 +386,36 @@ fn unmeasured_presence_handles_renames_deletions_and_empty_entries() -> Result<(
     assert_eq!(result.unmeasured_files, ["README.md", "new.rs"]);
     Ok(())
 }
+
+#[test]
+fn ignored_old_rename_name_does_not_trigger_unmeasured_gate() -> Result<()> {
+    use clap::Parser;
+    use patchcov::cli::{Cli, Commands};
+    let mut repo = TestRepo::new()?;
+    repo.commit("base", &[("old.rs", "one\ntwo\n")])?;
+    repo.commit("rename", &[("new.rs", "one\ntwo\n")])?;
+    let report = repo.repo_path.join("head.lcov");
+    fs::write(&report, "SF:old.rs\nDA:1,1\nend_of_record\n")?;
+    let cli = Cli::try_parse_from([
+        "patchcov",
+        "diff",
+        "--report",
+        report.to_str().unwrap(),
+        "--base-ref",
+        &repo.base_sha(),
+        "--fail-on-unmeasured",
+        "**/*.rs",
+        "--ignore-filename-regex",
+        "^old\\.rs$",
+        "--output",
+        "json",
+    ])?;
+    let Commands::Diff(cmd) = cli.command else {
+        panic!("expected diff command")
+    };
+    let outcome = cmd.run(Some(&repo.repo_path))?;
+    assert!(outcome.unmeasured_failures.is_empty());
+    let value: serde_json::Value = serde_json::from_str(&outcome.rendered)?;
+    assert_eq!(value["unmeasured_files"], serde_json::json!([]));
+    Ok(())
+}
