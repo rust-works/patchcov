@@ -30,10 +30,13 @@ is covered by tests. It is built to be a clear signal, not a dashboard.
   compact list, and exit codes from `--fail-under-patch` and `--fail-under-lines`
   make it easy to automate, including in a loop where an agent adds tests until the
   gate passes.
-- **No service in the loop.** It reads report files from disk and sends nothing
-  anywhere: no account, upload token or third-party service in your CI path, and it
-  runs the same on a laptop, in a sandbox or in CI. A coverage check is a command you
-  can run before you push, not something you learn about afterwards.
+- **No service in the loop, so no outage to block you.** It reads report files from
+  disk and sends nothing anywhere: no account, upload token or server to be down, slow
+  or rate-limited. It runs on the same runners as your other CI jobs, so the coverage
+  gate is available whenever your CI is, and a hosted quality server going down for
+  days cannot block merges. It runs the same on a laptop or in a sandbox, so a coverage
+  check is a command you can run before you push, not something you learn about
+  afterwards.
 - **Quiet by construction.** Coverage that flaps between runs (a region gated on a
   runtime CPU feature, say) is the usual source of phantom regressions. Per-file
   scoping, a tolerance on the headline delta and `tolerate` source markers keep that
@@ -52,6 +55,8 @@ Choose patchcov when:
 
 - the question you need answered is "did this change add untested code, and where?";
 - coverage is checked by automation, including AI agents, as much as by people;
+- you want the coverage gate to depend on nothing but your own CI runners, so an
+  outage of an external quality server or coverage service cannot block your work;
 - you want the check to run locally and in CI without sending code coverage to an
   external service;
 - your coverage is noisy and you need regressions you can trust;
