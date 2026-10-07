@@ -100,6 +100,12 @@ pub struct DiffCommand {
     #[arg(long, value_enum, default_value_t = ReportFormat::Auto)]
     pub report_format: ReportFormat,
 
+    /// Treat lines with missed branches as uncovered (lcov and Cobertura only).
+    /// Applies to head, baseline, totals and both gates. Missing branch records
+    /// retain line-only semantics. Use original reports: `merge` drops branches.
+    #[arg(long)]
+    pub branch_coverage: bool,
+
     /// Base revision to diff against (default: merge-base of `origin/main` and `HEAD`).
     #[arg(long, value_name = "REV")]
     pub base_ref: Option<String>,
@@ -319,12 +325,34 @@ pub(super) fn read_report(
     format: ReportFormat,
     repo_root: &Path,
 ) -> Result<CoverageReport> {
+    read_report_mode(path, format, repo_root, false)
+}
+
+/// Reads a report, optionally retaining branch evidence for supported formats.
+fn read_report_mode(
+    path: &Path,
+    format: ReportFormat,
+    repo_root: &Path,
+    branch_coverage: bool,
+) -> Result<CoverageReport> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("could not read coverage report {}", path.display()))?;
     let resolved = resolve_format(&content, format.into_format())
         .with_context(|| format!("could not parse coverage report {}", path.display()))?;
-    let mut report = parse(&content, Some(resolved))
-        .with_context(|| format!("could not parse coverage report {}", path.display()))?;
+    let parsed = if branch_coverage {
+        match resolved {
+            Format::Lcov => crate::lcov::parse_with_branches(&content),
+            Format::Cobertura => crate::cobertura::parse_with_branches(&content),
+            _ => anyhow::bail!(
+                "--branch-coverage supports only lcov and Cobertura reports: {}",
+                path.display()
+            ),
+        }
+    } else {
+        parse(&content, Some(resolved))
+    };
+    let mut report =
+        parsed.with_context(|| format!("could not parse coverage report {}", path.display()))?;
     if resolved == Format::GoCoverprofile {
         if let Some(module) = std::fs::read_to_string(repo_root.join("go.mod"))
             .ok()
@@ -580,6 +608,12 @@ impl DiffCommand {
         };
         let mut head = head;
         let mut baseline = baseline;
+        if self.branch_coverage {
+            head.apply_branch_coverage();
+            if let Some(baseline) = baseline.as_mut() {
+                baseline.apply_branch_coverage();
+            }
+        }
         apply_ignored(&mut head, &markers.head);
         if let Some(baseline) = baseline.as_mut() {
             apply_ignored(baseline, &markers.base);
@@ -652,7 +686,8 @@ impl DiffCommand {
         let mut merged = CoverageReport::new();
         for path in &self.report {
             let path = anchor(path, repo_root);
-            let mut report = read_report(&path, self.report_format, repo_root)?;
+            let mut report =
+                read_report_mode(&path, self.report_format, repo_root, self.branch_coverage)?;
             let mapped_root = report.map_paths_with_root_match(mappings)?;
             if sharded {
                 // Like an in-tree absolute path, an explicitly mapped runner
@@ -685,10 +720,11 @@ impl DiffCommand {
         repo_root: &Path,
         excluded: &mut ExcludedFiles,
     ) -> Result<CoverageReport> {
-        let mut report = read_report(
+        let mut report = read_report_mode(
             &anchor(path, repo_root),
             self.baseline_report_format,
             repo_root,
+            self.branch_coverage,
         )?;
         report.map_paths(mappings)?;
         excluded.record_baseline(normalise_report(&mut report, strip_prefix, ignore));
@@ -861,6 +897,7 @@ mod tests {
         DiffCommand {
             report: vec![report],
             report_format: ReportFormat::Auto,
+            branch_coverage: false,
             base_ref: Some(base_ref.to_string()),
             head_ref: None,
             baseline_report: None,
@@ -2312,5 +2349,181 @@ mod tests {
             .unwrap();
         assert_eq!(outcome.patch_percent, Some(2.0 / 3.0 * 100.0));
         assert!(outcome.rendered.contains("`b.rs:2`"));
+    }
+    #[test]
+    fn partial_added_lines_affect_output_and_both_gates_only_when_opted_in() {
+        for text in [
+            "SF:b.rs\nDA:1,1\nDA:2,1\nDA:3,1\nBRDA:2,0,0,1\nBRDA:2,0,1,0\nend_of_record",
+            r#"<coverage><class filename="b.rs"><lines><line number="1" hits="1"/><line number="2" hits="1" condition-coverage="50% (1/2)"/><line number="3" hits="1"/></lines></class></coverage>"#,
+        ] {
+            let (_dir, repo, base) = repo_with_added_file();
+            let path = repo.join("report");
+            fs::write(&path, text).unwrap();
+            let mut cmd = command(path, &base);
+            cmd.fail_under_patch = Some(90.0);
+            cmd.fail_under_lines = Some(90.0);
+            let default = cmd.run(Some(&repo)).unwrap();
+            assert_eq!(default.patch_percent, Some(100.0));
+            assert!(!default.below_gate && !default.below_line_gate);
+            cmd.branch_coverage = true;
+            let outcome = cmd.run(Some(&repo)).unwrap();
+            assert_eq!(outcome.patch_percent, Some(2.0 / 3.0 * 100.0));
+            assert_eq!(outcome.line_percent, outcome.patch_percent);
+            assert!(outcome.below_gate && outcome.below_line_gate);
+            assert!(outcome.rendered.contains("`b.rs:2`"));
+            for output in [OutputFormatArg::Json, OutputFormatArg::Yaml] {
+                cmd.output = output;
+                assert_eq!(
+                    cmd.run(Some(&repo)).unwrap().patch_percent,
+                    outcome.patch_percent
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn branch_shards_union_before_scoring_in_either_order() {
+        let (_dir, repo, base) = repo_with_added_file();
+        let a = repo.join("a.lcov");
+        let b = repo.join("b.lcov");
+        fs::write(
+            &a,
+            "SF:b.rs\nDA:1,1\nBRDA:1,0,0,1\nBRDA:1,0,1,0\nend_of_record",
+        )
+        .unwrap();
+        fs::write(
+            &b,
+            "SF:b.rs\nDA:1,1\nBRDA:1,0,0,0\nBRDA:1,0,1,1\nend_of_record",
+        )
+        .unwrap();
+        let mut cmd = command(a, &base);
+        cmd.branch_coverage = true;
+        assert_eq!(cmd.run(Some(&repo)).unwrap().patch_percent, Some(0.0));
+        cmd.report.push(b);
+        let combined = cmd.run(Some(&repo)).unwrap();
+        assert_eq!(combined.patch_percent, Some(100.0));
+        cmd.report.reverse();
+        assert_eq!(cmd.run(Some(&repo)).unwrap().rendered, combined.rendered);
+    }
+
+    #[test]
+    fn full_to_partial_baseline_is_an_indirect_loss() {
+        let (_dir, repo, base) = repo_with_added_file();
+        let head = repo.join("head.lcov");
+        let baseline = repo.join("base.lcov");
+        fs::write(
+            &head,
+            "SF:a.rs\nDA:1,1\nBRDA:1,0,0,1\nBRDA:1,0,1,0\nend_of_record",
+        )
+        .unwrap();
+        fs::write(
+            &baseline,
+            "SF:a.rs\nDA:1,1\nBRDA:1,0,0,1\nBRDA:1,0,1,1\nend_of_record",
+        )
+        .unwrap();
+        let mut cmd = command(head, &base);
+        cmd.baseline_report = Some(baseline);
+        cmd.all_files = true;
+        cmd.output = OutputFormatArg::Json;
+        let default: serde_json::Value =
+            serde_json::from_str(&cmd.run(Some(&repo)).unwrap().rendered).unwrap();
+        assert_eq!(default["indirect_changes"]["newly_uncovered"], 0);
+        cmd.branch_coverage = true;
+        let outcome = cmd.run(Some(&repo)).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&outcome.rendered).unwrap();
+        assert_eq!(json["indirect_changes"]["newly_uncovered"], 1);
+        assert_eq!(outcome.line_percent, Some(0.0));
+        // Untouched files remain hidden without --all-files.
+        cmd.all_files = false;
+        let json: serde_json::Value =
+            serde_json::from_str(&cmd.run(Some(&repo)).unwrap().rendered).unwrap();
+        assert_eq!(json["indirect_changes"]["newly_uncovered"], 0);
+    }
+
+    #[test]
+    fn branch_mode_rejects_unsupported_head_and_baseline_formats() {
+        let (_dir, repo, base) = repo_with_added_file();
+        let path = repo.join("jacoco.xml");
+        fs::write(&path, r#"<report><package name=""><sourcefile name="b.rs"><line nr="1" mi="0" ci="1" mb="1" cb="1"/></sourcefile></package></report>"#).unwrap();
+        let mut cmd = command(path.clone(), &base);
+        cmd.branch_coverage = true;
+        assert!(cmd
+            .run(Some(&repo))
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("supports only lcov and Cobertura"));
+        cmd.report = vec![write_head_lcov(&repo)];
+        cmd.baseline_report = Some(path);
+        assert!(cmd
+            .run(Some(&repo))
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("supports only lcov and Cobertura"));
+    }
+
+    #[test]
+    fn branch_flag_parses() {
+        use clap::Parser;
+        let cmd = DiffCommand::try_parse_from(["diff", "--report", "r.lcov", "--branch-coverage"])
+            .unwrap();
+        assert!(cmd.branch_coverage);
+    }
+
+    #[test]
+    fn baseline_partial_to_full_gains_and_partial_to_partial_stays_uncovered() {
+        let (_dir, repo, base) = repo_with_added_file();
+        let head = repo.join("head.xml");
+        let baseline = repo.join("base.xml");
+        let report = |covered| {
+            format!(
+                r#"<coverage><class filename="a.rs"><line number="1" hits="1" condition-coverage="50% ({covered}/2)"/></class></coverage>"#
+            )
+        };
+        fs::write(&baseline, report(1)).unwrap();
+        fs::write(&head, report(0)).unwrap();
+        let mut cmd = command(head.clone(), &base);
+        cmd.baseline_report = Some(baseline);
+        cmd.branch_coverage = true;
+        cmd.all_files = true;
+        cmd.output = OutputFormatArg::Json;
+        let json: serde_json::Value =
+            serde_json::from_str(&cmd.run(Some(&repo)).unwrap().rendered).unwrap();
+        assert_eq!(json["indirect_changes"]["newly_uncovered"], 0);
+        assert_eq!(json["indirect_changes"]["newly_covered"], 0);
+        fs::write(head, report(2)).unwrap();
+        let outcome = cmd.run(Some(&repo)).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&outcome.rendered).unwrap();
+        assert_eq!(json["indirect_changes"]["newly_covered"], 1);
+        assert_eq!(outcome.line_percent, Some(100.0));
+    }
+
+    #[test]
+    fn ignore_marker_removes_a_partial_line_from_branch_aware_gates() {
+        let (_dir, repo, base) = repo_with_added_file();
+        fs::write(
+            repo.join("b.rs"),
+            format!(
+                "one\ntwo // {} coverage ignore-line reason=\"generated\"\nthree\n",
+                "patchcov:"
+            ),
+        )
+        .unwrap();
+        let path = repo.join("head.lcov");
+        fs::write(
+            &path,
+            "SF:b.rs\nDA:1,1\nDA:2,1\nDA:3,1\nBRDA:2,0,0,0\nend_of_record",
+        )
+        .unwrap();
+        let mut cmd = command(path, &base);
+        cmd.branch_coverage = true;
+        cmd.fail_under_patch = Some(100.0);
+        cmd.fail_under_lines = Some(100.0);
+        let outcome = cmd.run(Some(&repo)).unwrap();
+        assert_eq!(outcome.patch_percent, Some(100.0));
+        assert_eq!(outcome.line_percent, Some(100.0));
+        assert!(!outcome.below_gate && !outcome.below_line_gate);
+        assert!(!outcome.rendered.contains("`b.rs:2`"));
     }
 }

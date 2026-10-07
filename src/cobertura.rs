@@ -4,7 +4,7 @@
 //! containing `<lines><line number="N" hits="H"/></lines>`. A single source
 //! file may be split across several `<class>` elements (one per class/closure);
 //! [`CoverageReport::insert`][super::model::CoverageReport::insert] merges them.
-//! Branch (`condition-coverage`) data is ignored — v1 is line coverage only.
+//! The default parser ignores branch data; [`parse_with_branches`] retains it.
 
 use anyhow::{Context, Result};
 use quick_xml::events::{BytesStart, Event};
@@ -14,6 +14,15 @@ use super::model::{CoverageReport, FileCoverage};
 
 /// Parses cobertura XML text into a [`CoverageReport`].
 pub fn parse(content: &str) -> Result<CoverageReport> {
+    parse_impl(content, false)
+}
+
+/// Parses line hits and aggregate condition-coverage counts for branch-aware diffs.
+pub fn parse_with_branches(content: &str) -> Result<CoverageReport> {
+    parse_impl(content, true)
+}
+
+fn parse_impl(content: &str, branch_coverage: bool) -> Result<CoverageReport> {
     let mut reader = Reader::from_str(content);
     // Be lenient about unclosed/mismatched tags: we only read `class`/`line`
     // attributes, and some coverage tools emit slightly non-well-formed XML.
@@ -25,7 +34,7 @@ pub fn parse(content: &str) -> Result<CoverageReport> {
         match reader.read_event().context("malformed cobertura XML")? {
             Event::Eof => break,
             Event::Start(e) | Event::Empty(e) => {
-                handle_start(&e, &mut current, &mut report)?;
+                handle_start(&e, &mut current, &mut report, branch_coverage)?;
             }
             Event::End(e) if e.name().as_ref() == b"class" => {
                 if let Some(file) = current.take() {
@@ -49,6 +58,7 @@ fn handle_start(
     e: &BytesStart,
     current: &mut Option<FileCoverage>,
     report: &mut CoverageReport,
+    branch_coverage: bool,
 ) -> Result<()> {
     match e.name().as_ref() {
         b"class" => {
@@ -69,11 +79,41 @@ fn handle_start(
                     .and_then(|s| s.parse::<u64>().ok())
                     .unwrap_or(0);
                 file.record(number, hits);
+                if branch_coverage {
+                    if let Some(value) = attr(e, b"condition-coverage")? {
+                        let (covered, total) = condition_counts(&value)?;
+                        file.missed_branches
+                            .entry(number)
+                            .and_modify(|v| *v = (*v).max(total - covered))
+                            .or_insert(total - covered);
+                    }
+                }
             }
         }
         _ => {}
     }
     Ok(())
+}
+
+/// Reads the exact counts in `50% (1/2)` rather than its rounded percentage.
+fn condition_counts(value: &str) -> Result<(u64, u64)> {
+    let (_, counts) = value
+        .split_once('(')
+        .context("invalid Cobertura condition-coverage counts")?;
+    let counts = counts
+        .trim()
+        .strip_suffix(')')
+        .context("invalid Cobertura condition-coverage counts")?;
+    let (covered, total) = counts
+        .split_once('/')
+        .context("invalid Cobertura condition-coverage counts")?;
+    let covered: u64 = covered
+        .trim()
+        .parse()
+        .context("invalid covered branch count")?;
+    let total: u64 = total.trim().parse().context("invalid total branch count")?;
+    anyhow::ensure!(covered <= total, "covered branch count exceeds total");
+    Ok((covered, total))
 }
 
 /// Reads attribute `key` off `e`, unescaping its value.
@@ -180,5 +220,43 @@ mod tests {
     #[test]
     fn malformed_xml_errors() {
         assert!(parse("<coverage><class").is_err());
+    }
+    #[test]
+    fn branch_counts_score_partial_full_and_zero_lines() {
+        let xml = r#"<coverage><class filename="a.rs"><lines>
+            <line number="1" hits="2" condition-coverage="50% (1/2)"/>
+            <line number="2" hits="2" condition-coverage="100% (2/2)"/>
+            <line number="3" hits="2" condition-coverage="0% (0/2)"/>
+            <line number="4" hits="0" condition-coverage="100% (2/2)"/>
+            <line number="5" hits="1"/>
+            <line number="6" hits="1" condition-coverage="100% (0/0)"/>
+            <line number="1" hits="3" condition-coverage="100% (2/2)"/>
+        </lines></class></coverage>"#;
+        let mut report = parse_with_branches(xml).unwrap();
+        report.apply_branch_coverage();
+        for line in [1, 3, 4] {
+            assert_eq!(report.hits("a.rs", line), Some(0));
+        }
+        for line in [2, 5, 6] {
+            assert!(report.hits("a.rs", line).unwrap() > 0);
+        }
+        assert_eq!(parse(xml).unwrap().covered_lines(), 5);
+    }
+
+    #[test]
+    fn malformed_condition_counts_fail_only_in_branch_mode() {
+        for value in [
+            "50%",
+            "50% (1/x)",
+            "50% (3/2)",
+            "50% (1/2",
+            "50% (1/2) junk",
+        ] {
+            let xml = format!(
+                r#"<coverage><class filename="a.rs"><line number="1" hits="1" condition-coverage="{value}"/></class></coverage>"#
+            );
+            assert!(parse_with_branches(&xml).is_err(), "{value}");
+            assert!(parse(&xml).is_ok());
+        }
     }
 }

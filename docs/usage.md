@@ -24,7 +24,8 @@ Given a coverage report and a diff, it produces:
 - **Indirect coverage changes** — coverage that flipped on lines the diff never
   touched (also requires a baseline).
 
-Line coverage only; branch-coverage data in the report is ignored.
+Line coverage is the default. Opt into lcov/Cobertura branch-aware line scoring
+with `diff --branch-coverage` (see below).
 
 ## Inputs
 
@@ -173,8 +174,9 @@ The parser depends on the report format, not the source language. Run coverage
 against the head revision, produce a report below, then use
 `patchcov diff --report <report>` (and optionally a baseline produced
 at the base revision). Reports must include per-line records; summary-only JSON,
-HTML, Clover XML and OpenCover XML are not supported. Branch/function data is
-ignored. Install/configure each tool in your project before using these examples.
+HTML, Clover XML and OpenCover XML are not supported. By default,
+branch/function data is ignored. Install/configure each tool in your project
+before using these examples.
 
 - **JavaScript / TypeScript — Istanbul/nyc lcov.**
   `npx nyc --reporter=lcov npm test` writes `coverage/lcov.info`. Run from the
@@ -291,6 +293,49 @@ Because the gate needs only the report, it works wherever `patchcov diff` does �
 including when the report was produced elsewhere (for example, from several CI
 jobs, see [Sharded runs](#sharded-runs)) and the profile data is not on the
 machine running the gate.
+
+
+## Opt-in branch coverage
+
+```bash
+patchcov diff --report head.lcov --branch-coverage --fail-under-patch 80
+```
+
+`--branch-coverage` supports **lcov** `BRDA` and **Cobertura**
+`condition-coverage="50% (1/2)"` counts. Other report formats, including a
+baseline in an unsupported format, fail explicitly in this mode. The default
+continues to use line hits only.
+
+An executable line is covered only if it has hits and every recorded branch ran.
+A line with hits but missed branches appears in the existing uncovered list and
+counts as uncovered. lcov `-` branch counts count as missed. Lines without branch
+records keep their line-hit semantics; branch records do not introduce additional
+executable lines. This is a percentage of **lines**, not a percentage of branches:
+a line with one or many missed branches counts once in the denominator. Partial
+lines currently have no separate label or missed-count annotation.
+
+The same scoring applies to patch coverage, project totals, file deltas and both
+`--fail-under-patch` and `--fail-under-lines`. With `--baseline-report`, an
+unchanged line going from fully covered to partially covered is an indirect loss;
+partial-to-full is an indirect gain. Partial-to-partial changes stay uncovered
+on both sides and produce no indirect change. The usual file scope applies:
+untouched files require `--all-files`. Ignore and tolerate markers retain their
+existing behavior.
+
+For multiple lcov `--report` shards, a branch is identified by line, block and
+branch IDs and counts as covered if any shard ran it. Scoring happens after this
+union. Cobertura exposes only aggregate counts, so duplicate records and shards
+conservatively keep the largest missed count for each line; complementary
+coverage cannot be reconstructed from counts alone. Exact covered/total counts
+are used rather than rounded percentages; malformed branch data fails only when
+branch mode is enabled.
+
+**Use original reports.** `patchcov merge` remains line-only and drops branch
+records, so its output cannot supply branch evidence for either head or baseline.
+JaCoCo and llvm-cov JSON branches are outside this first implementation. The
+feature is tested with report fixtures, not by running `cargo llvm-cov --branch`;
+no Rust branch-instrumentation toolchain has been validated for this feature.
+
 
 ## Why the total differs from llvm-cov's summary
 
@@ -889,6 +934,7 @@ first with [`patchcov merge`](#merging-shards-into-one-file).
 | `-o, --output <FMT>` | `markdown` (default) \| `yaml` \| `json` |
 | `--fail-under-patch <PCT>` | Exit non-zero when patch coverage is below `<PCT>` |
 | `--fail-on-unmeasured <GLOB>` | Exit non-zero for matching touched files absent from every report (repeatable; unioned with `diff.require-measured`) |
+| `--branch-coverage` | Score lines with missed lcov/Cobertura branches as uncovered in head and baseline |
 | `--fail-under-lines <PCT>` | Exit non-zero when overall line coverage is below `<PCT>`, or the report has no executable lines |
 | `--collapse-ranges` | Collapse consecutive uncovered new lines into ranges |
 | `--all-files` | Report deltas/indirect changes for all files, not just touched ones |

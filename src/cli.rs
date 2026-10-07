@@ -62,6 +62,7 @@ mod tests {
             command: Commands::Diff(Box::new(diff::DiffCommand {
                 report: vec![std::path::PathBuf::from("/nonexistent/report.lcov")],
                 report_format: diff::ReportFormat::Auto,
+                branch_coverage: false,
                 base_ref: Some("HEAD".to_string()),
                 head_ref: None,
                 baseline_report: None,
