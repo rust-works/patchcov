@@ -246,6 +246,17 @@ these toolchains to run the Rust tests.
   `--commit-url` (a SHA-link prefix); these only affect the rendered links.
 - `yaml` / `json` — structured output for scripting and downstream tooling.
 
+JSON and YAML include an `explanation` block by default, describing the output
+fields. Use `--no-explanation` to omit only that block on repeated runs:
+
+```bash
+patchcov diff --report head.lcov -o json --no-explanation
+patchcov diff --report head.lcov -o yaml --no-explanation
+```
+
+All other fields, formatting, and coverage gates stay the same. The flag has no
+effect on Markdown output.
+
 ## Gating
 
 `--fail-under-patch <PCT>` makes the command exit non-zero when patch coverage is

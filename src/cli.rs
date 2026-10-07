@@ -67,6 +67,7 @@ mod tests {
                 baseline_report: None,
                 baseline_report_format: diff::ReportFormat::Auto,
                 output: diff::OutputFormatArg::Markdown,
+                no_explanation: false,
                 format: None,
                 fail_under_patch: None,
                 fail_under_lines: None,
