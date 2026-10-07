@@ -20,6 +20,10 @@ pub struct FileCoverage {
     pub path: String,
     /// Map of 1-based line number to hit count.
     pub lines: BTreeMap<u32, u64>,
+    /// Opt-in lcov branch outcomes, keyed by line, block and branch identity.
+    pub branches: BTreeMap<(u32, String, String), bool>,
+    /// Opt-in Cobertura missed counts; aggregate counts cannot identify branches.
+    pub missed_branches: BTreeMap<u32, u64>,
 }
 
 impl FileCoverage {
@@ -28,6 +32,8 @@ impl FileCoverage {
         Self {
             path: path.into(),
             lines: BTreeMap::new(),
+            branches: BTreeMap::new(),
+            missed_branches: BTreeMap::new(),
         }
     }
 
@@ -38,6 +44,25 @@ impl FileCoverage {
             .entry(line)
             .and_modify(|h| *h = (*h).max(hits))
             .or_insert(hits);
+    }
+
+    /// Merges line hits and branch evidence without scoring until all shards arrive.
+    fn merge(&mut self, other: Self) {
+        for (line, hits) in other.lines {
+            self.record(line, hits);
+        }
+        for (key, covered) in other.branches {
+            self.branches
+                .entry(key)
+                .and_modify(|v| *v |= covered)
+                .or_insert(covered);
+        }
+        for (line, missed) in other.missed_branches {
+            self.missed_branches
+                .entry(line)
+                .and_modify(|v| *v = (*v).max(missed))
+                .or_insert(missed);
+        }
     }
 
     /// Number of executable lines.
@@ -82,9 +107,7 @@ impl CoverageReport {
     pub fn insert(&mut self, file: FileCoverage) {
         match self.files.get_mut(&file.path) {
             Some(existing) => {
-                for (line, hits) in file.lines {
-                    existing.record(line, hits);
-                }
+                existing.merge(file);
             }
             None => {
                 self.files.insert(file.path.clone(), file);
@@ -112,6 +135,27 @@ impl CoverageReport {
         self.files
             .get(path)
             .and_then(|f| f.lines.get(&line).copied())
+    }
+
+    /// Scores any executable line with missed branches as uncovered.
+    /// Call only after merging shards; applying this before merging loses outcomes.
+    pub fn apply_branch_coverage(&mut self) {
+        for file in self.files.values_mut() {
+            for (&(line, _, _), &covered) in &file.branches {
+                if !covered {
+                    if let Some(hits) = file.lines.get_mut(&line) {
+                        *hits = 0;
+                    }
+                }
+            }
+            for (&line, &missed) in &file.missed_branches {
+                if missed > 0 {
+                    if let Some(hits) = file.lines.get_mut(&line) {
+                        *hits = 0;
+                    }
+                }
+            }
+        }
     }
 
     /// Total executable lines across all files.
@@ -152,9 +196,7 @@ impl CoverageReport {
             // Merge in case two source paths normalise to the same repo path.
             match remapped.get_mut(&normalized) {
                 Some(existing) => {
-                    for (line, hits) in std::mem::take(&mut file.lines) {
-                        existing.record(line, hits);
-                    }
+                    existing.merge(file);
                 }
                 None => {
                     remapped.insert(normalized, file);
@@ -204,6 +246,10 @@ impl CoverageReport {
     {
         for (path, file) in &mut self.files {
             file.lines.retain(|&line, _| keep(path, line));
+            file.branches
+                .retain(|(line, _, _), _| file.lines.contains_key(line));
+            file.missed_branches
+                .retain(|line, _| file.lines.contains_key(line));
         }
         self.files.retain(|_, file| file.total_lines() > 0);
     }
@@ -435,5 +481,36 @@ mod tests {
             1,
             "the dropped file keeps its lines"
         );
+    }
+    #[test]
+    fn branch_evidence_survives_aliases_merges_and_line_filters() {
+        let mut a = crate::lcov::parse_with_branches("SF:/root/a.rs\nDA:1,1\nDA:2,1\nBRDA:1,0,0,1\nBRDA:1,0,1,0\nBRDA:2,0,0,0\nend_of_record").unwrap();
+        let b = crate::lcov::parse_with_branches(
+            "SF:/root/./a.rs\nDA:1,2\nBRDA:1,0,0,0\nBRDA:1,0,1,1\nend_of_record",
+        )
+        .unwrap();
+        a.merge(b);
+        a.strip_prefix(Path::new("/root"));
+        a.retain_lines(|_, line| line != 2);
+        assert_eq!(a.files["a.rs"].branches.len(), 2);
+        a.apply_branch_coverage();
+        assert_eq!(a.hits("a.rs", 1), Some(2));
+        assert_eq!(a.hits("a.rs", 2), None);
+    }
+
+    #[test]
+    fn mapped_aliases_keep_partial_branch_evidence() {
+        let mut report = crate::lcov::parse_with_branches(
+            "SF:pkg/a.rs\nDA:1,1\nBRDA:1,0,0,0\nend_of_record\nSF:a.rs\nDA:1,2\nend_of_record",
+        )
+        .unwrap();
+        report
+            .map_paths(&[crate::paths::PathMapping {
+                from: "pkg".into(),
+                to: String::new(),
+            }])
+            .unwrap();
+        report.apply_branch_coverage();
+        assert_eq!(report.hits("a.rs", 1), Some(0));
     }
 }

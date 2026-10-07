@@ -1,9 +1,9 @@
-//! lcov trace-file parser and writer (line coverage only).
+//! lcov trace-file parser and line-only writer.
 //!
 //! lcov records one source file per `SF:`…`end_of_record` block. Within a block,
 //! `DA:<line>,<hits>[,<checksum>]` gives the hit count for an instrumented line.
-//! Branch (`BRDA`) and function (`FN*`) records are ignored — v1 is scoped to
-//! line coverage to match the existing coverage comment.
+//! The default parser ignores branch (`BRDA`) and function (`FN*`) records.
+//! [`parse_with_branches`] retains branch outcomes for opt-in diff analysis.
 //!
 //! Reference: <https://manpages.debian.org/unstable/lcov/geninfo.1.en.html>
 
@@ -15,6 +15,16 @@ use super::model::{CoverageReport, FileCoverage};
 
 /// Parses lcov trace text into a [`CoverageReport`].
 pub fn parse(content: &str) -> Result<CoverageReport> {
+    parse_impl(content, false)
+}
+
+/// Parses line hits and BRDA outcomes for opt-in branch-aware diff analysis.
+/// Unknown (`-`) execution counts are treated as missed branches.
+pub fn parse_with_branches(content: &str) -> Result<CoverageReport> {
+    parse_impl(content, true)
+}
+
+fn parse_impl(content: &str, branch_coverage: bool) -> Result<CoverageReport> {
     let mut report = CoverageReport::new();
     let mut current: Option<FileCoverage> = None;
 
@@ -48,6 +58,29 @@ pub fn parse(content: &str) -> Result<CoverageReport> {
             let (number, hits) = parse_da(rest)
                 .with_context(|| format!("lcov line {}: malformed DA record", lineno + 1))?;
             file.record(number, hits);
+        } else if branch_coverage && line.starts_with("BRDA:") {
+            let file = current
+                .as_mut()
+                .context("BRDA record outside of an SF block")?;
+            let parts: Vec<_> = line[5..].split(',').map(str::trim).collect();
+            anyhow::ensure!(
+                parts.len() == 4 && !parts[1].is_empty() && !parts[2].is_empty(),
+                "lcov line {}: malformed BRDA record",
+                lineno + 1
+            );
+            let number: u32 = parts[0].parse().context("invalid BRDA line number")?;
+            let covered = if parts[3] == "-" {
+                false
+            } else {
+                parts[3]
+                    .parse::<u64>()
+                    .context("invalid BRDA execution count")?
+                    > 0
+            };
+            file.branches
+                .entry((number, parts[1].to_string(), parts[2].to_string()))
+                .and_modify(|v| *v |= covered)
+                .or_insert(covered);
         }
         // All other records (TN, BRDA, FN, FNDA, LF, LH, …) are ignored.
     }
@@ -69,8 +102,8 @@ pub fn parse(content: &str) -> Result<CoverageReport> {
 /// `cargo llvm-cov` omits and which makes its files unsafe to join with `cat`.
 ///
 /// Only what the line model holds is written: `TN`, `SF`, `DA`, `LF`, `LH` and
-/// `end_of_record`. Function (`FN*`) and branch (`BRDA`) records are not part of
-/// the model and are dropped. `LF`/`LH` count the `DA` records written, so a
+/// `end_of_record`. Function (`FN*`) and branch (`BRDA`) records are dropped,
+/// including any branch evidence retained by [`parse_with_branches`]. `LF`/`LH` count the `DA` records written, so a
 /// file is consistent with itself; `llvm-cov` writes them from its own summary
 /// instead, which counts some lines more than once.
 ///
@@ -385,5 +418,27 @@ end_of_record
                 "{message}"
             );
         }
+    }
+    #[test]
+    fn branch_mode_scores_outcomes_and_unions_duplicate_identities() {
+        let text = "SF:a.rs\nDA:1,3\nDA:2,1\nDA:3,1\nDA:4,1\nBRDA:1,0,0,2\nBRDA:1,0,1,0\nBRDA:2,0,0,-\nBRDA:3,0,0,0\nBRDA:3,0,0,1\nend_of_record";
+        let mut report = parse_with_branches(text).unwrap();
+        assert_eq!(report.hits("a.rs", 1), Some(3));
+        report.apply_branch_coverage();
+        assert_eq!(report.hits("a.rs", 1), Some(0));
+        assert_eq!(report.hits("a.rs", 2), Some(0));
+        assert_eq!(report.hits("a.rs", 3), Some(1));
+        assert_eq!(report.hits("a.rs", 4), Some(1));
+        assert_eq!(parse(text).unwrap().covered_lines(), 4);
+    }
+
+    #[test]
+    fn malformed_branches_fail_only_in_branch_mode() {
+        for record in ["BRDA:1,0,0", "BRDA:x,0,0,1", "BRDA:1,0,0,x", "BRDA:1,,0,1"] {
+            let text = format!("SF:a.rs\nDA:1,1\n{record}\nend_of_record");
+            assert!(parse_with_branches(&text).is_err(), "{record}");
+            assert!(parse(&text).is_ok());
+        }
+        assert!(parse_with_branches("BRDA:1,0,0,1").is_err());
     }
 }
