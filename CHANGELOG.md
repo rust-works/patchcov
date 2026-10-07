@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/rust-works/patchcov/compare/v0.2.0...v0.3.0) - 2026-10-07
+
+### Fixed
+
+- *(diff)* avoid index lookup panic on Windows report paths
+- *(diff)* warn when report paths match no tracked files
+
+### Other
+
+- explain that an explicit --base-ref is not a merge base
+- *(contributing)* add contributor guide and changelog guidance
+- *(readme)* show sample output and cover install, library and config
+- split usage into usage, reference, explanation and troubleshooting
+- *(diff)* cover baseline path mismatch diagnostics
+
 ## [0.2.0](https://github.com/rust-works/patchcov/compare/v0.1.1...v0.2.0) - 2026-10-07
 
 ### Added
