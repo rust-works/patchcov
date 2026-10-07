@@ -36,6 +36,18 @@ path = "src/lib.rs"
 name = "patchcov"
 path = "src/main.rs"
 
+# cargo-binstall: fetch the release archive that .github/workflows/release-plz.yml
+# uploads instead of building from source. The archive is
+# patchcov-v<version>-<target>.tar.gz (.zip on Windows), holding a directory of
+# the same name. Keep this in step with that workflow and docs/RELEASE.md.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-v{ version }-{ target }{ archive-suffix }"
+bin-dir = "{ name }-v{ version }-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
+
 [lints.rust]
 unsafe_code = "deny"
 
