@@ -386,10 +386,13 @@ impl ReportPathCheck<'_> {
         let matches = match self.revision {
             Revision::Head(None) if self.repo.workdir().is_some() => {
                 let index = self.repo.index()?;
-                report
-                    .files
-                    .keys()
-                    .any(|path| index.get_path(Path::new(path), 0).is_some())
+                // get_path panics on Windows prefixes and other invalid repo
+                // paths. Compare stored git paths directly: unmatched report
+                // paths are diagnostic input, not paths safe for that API.
+                index.iter().any(|entry| {
+                    std::str::from_utf8(&entry.path)
+                        .is_ok_and(|path| report.files.contains_key(path))
+                })
             }
             revision => {
                 let rev = match revision {
@@ -2384,6 +2387,22 @@ mod tests {
             .unwrap()
             .to_string()
             .contains("bad.lcov"));
+    }
+
+    #[test]
+    fn windows_runner_paths_warn_instead_of_panicking() {
+        let (_dir, repo, base) = repo_with_added_file();
+        for path in [r"C:\agent\project\b.rs", "C:/agent/project/b.rs"] {
+            let report = repo.join("invalid.lcov");
+            fs::write(&report, format!("SF:{path}\nDA:1,1\nend_of_record\n")).unwrap();
+            let mut cmd = command(report, &base);
+            assert_eq!(cmd.run(Some(&repo)).unwrap().warnings.len(), 1);
+            cmd.fail_on_path_mismatch = true;
+            assert!(cmd.run(Some(&repo)).is_err());
+            cmd.head_ref = Some("HEAD".into());
+            cmd.fail_on_path_mismatch = false;
+            assert_eq!(cmd.run(Some(&repo)).unwrap().warnings.len(), 1);
+        }
     }
 
     #[test]
