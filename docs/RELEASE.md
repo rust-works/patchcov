@@ -46,15 +46,19 @@ downloaded one; `cargo install patchcov` avoids that.
 ### Writing a useful changelog
 
 release-plz builds each release's changelog section from the commit subjects on `main`,
-grouped by conventional-commit type: `feat` under *Added*, `fix` under *Fixed*, and the rest
-(`docs:`, `chore:`, and commits with no type) under *Other*, as the 0.2.0 section shows. The
-subject you write on the branch is therefore the only text a user sees, so write it for them.
+grouped by conventional-commit type: `feat` under *Added*, `fix` under *Fixed*, `docs` under
+*Documentation*, and the rest (`chore:` and commits with no type) under *Other*. The grouping
+is the `commit_parsers` list in [`release-plz.toml`](../release-plz.toml), which restates
+release-plz's defaults around the `docs` entry because a custom list replaces them. The 0.2.0
+section predates the *Documentation* group, so its documentation changes sit under *Other*. The
+subject you write on the branch is the only text a user sees, so write it for them.
 Before you select **Merge when ready** on a release PR, read its changelog section the way a
 user would:
 
 - Rewrite a vague or purely internal subject, or drop an entry that means nothing outside the
   repository.
-- Commit anything users will notice as `feat:` or `fix:`, so it does not land in *Other*.
+- Commit anything users will notice as `feat:` or `fix:`, so it does not land in *Other*, and
+  use `docs:` only for documentation changes.
 - Describe what changed for the user, not how it was implemented.
 
 Do not hand-edit the generated section of `CHANGELOG.md` on `main` outside a release PR, and
