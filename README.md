@@ -17,6 +17,57 @@ new lines are not, and whether anything moved on code the change did not touch.
 - **Silences** known-flaky regions with source markers, and files with a repo-level
   ignore list, without hiding real coverage.
 
+## Why patchcov
+
+patchcov does one job: it tells you, precisely and repeatably, whether a change
+is covered by tests. It is built to be a clear signal, not a dashboard.
+
+- **A precise signal.** The headline number is the share of *added* lines that are
+  covered, with the uncovered ones listed as `file:line`. Whoever or whatever reads it
+  (a reviewer, a script, an AI agent) knows what to do next without interpreting
+  charts or trends.
+- **Machine-readable and gateable.** JSON and YAML output, `--collapse-ranges` for a
+  compact list, and exit codes from `--fail-under-patch` and `--fail-under-lines`
+  make it easy to automate, including in a loop where an agent adds tests until the
+  gate passes.
+- **No service in the loop.** It reads report files from disk and sends nothing
+  anywhere: no account, upload token or third-party service in your CI path, and it
+  runs the same on a laptop, in a sandbox or in CI. A coverage check is a command you
+  can run before you push, not something you learn about afterwards.
+- **Quiet by construction.** Coverage that flaps between runs (a region gated on a
+  runtime CPU feature, say) is the usual source of phantom regressions. Per-file
+  scoping, a tolerance on the headline delta and `tolerate` source markers keep that
+  noise from reading as a regression while the reported numbers stay honest.
+- **Fails loudly.** An empty report, a failed shard or a malformed marker is an error,
+  not a quietly lower number. Everything that silences coverage needs a stated
+  reason and is listed in the PR comment, and settings live in `.patchcov/config.yaml`
+  in version control, so a reviewer can see what a gate does and what was excluded.
+- **One tool across languages.** Five report formats are detected from content, so the
+  same command works for Rust, Go, Java and Kotlin, JavaScript and TypeScript,
+  Python, C and C++ and more.
+
+## When to choose patchcov
+
+Choose patchcov when:
+
+- the question you need answered is "did this change add untested code, and where?";
+- coverage is checked by automation, including AI agents, as much as by people;
+- you want the check to run locally and in CI without sending code coverage to an
+  external service;
+- your coverage is noisy and you need regressions you can trust;
+- you run a sharded CI job and want a single combined result and gate.
+
+Choose something else, or use patchcov alongside it, when you need:
+
+- a hosted dashboard with coverage history, trend graphs or cross-repository views;
+- branch coverage (patchcov reads line coverage only);
+- a broader code-quality platform that covers coverage along with static analysis and
+  security scanning.
+
+patchcov measures whether lines ran, not whether the tests assert anything useful about
+them. Treat it as a regression signal, and pair it with review, or mutation testing,
+for confidence in the tests themselves.
+
 ## Install
 
 ```bash
