@@ -17,6 +17,61 @@ new lines are not, and whether anything moved on code the change did not touch.
 - **Silences** known-flaky regions with source markers, and files with a repo-level
   ignore list, without hiding real coverage.
 
+## What it prints
+
+`patchcov diff` writes the pull-request comment as markdown to stdout. This one is for a
+change that adds 12 lines to `src/parser.rs` and a new `src/cache.rs`, with a baseline
+report so the per-file table appears:
+
+> ## Coverage
+>
+> Total: **85.42%** 🔴 -14.58 pp vs `main`
+>
+> | File | Before | After | Δ |
+> |------|-------:|------:|---|
+> | `src/cache.rs` | — | 66.67% | 🆕 new |
+> | `src/parser.rs` | 100% | 84.38% | 🔴 -15.63 pp |
+>
+> ### Patch coverage
+>
+> Patch: **61.11%** (11/18 new lines covered)
+>
+> | File | Patch | Uncovered new lines |
+> |------|------:|---------------------|
+> | `src/cache.rs` | 66.67% (4/6) | 5-6 |
+> | `src/parser.rs` | 58.33% (7/12) | 28-32 |
+>
+> <details><summary>Uncovered new lines (7)</summary>
+>
+> - `src/cache.rs:5`
+> - `src/cache.rs:6`
+> - `src/parser.rs:28`
+> - `src/parser.rs:29`
+> - `src/parser.rs:30`
+> - `src/parser.rs:31`
+> - `src/parser.rs:32`
+>
+> </details>
+>
+> <sub>Full per-file summary is attached as the **coverage-summary** build artifact.</sub>
+
+Without `--baseline-report` the per-file table and indirect changes are omitted and the
+patch section is unchanged. With `-o json` or `-o yaml` the same result is structured
+data, in the shape described in the [output schema](docs/reference.md#output-schema):
+
+```json
+{
+  "patch_coverage": { "percent": 61.11, "covered": 11, "total": 18, "files": [ ... ] },
+  "uncovered_new_lines": ["src/cache.rs:5", "src/cache.rs:6", "src/parser.rs:28", ...],
+  "unmeasured_files": [],
+  "project_delta": { "total_before": 100.0, "total_after": 85.42, "files": [ ... ] },
+  "indirect_changes": { "newly_covered": 0, "newly_uncovered": 0, "lines": [] }
+}
+```
+
+Both are the output of [`docs/examples/sample.sh`](docs/examples/sample.sh), which builds a
+tiny git repository and runs the command, so you can reproduce them.
+
 ## Why patchcov
 
 patchcov does one job: it tells you, precisely and repeatably, whether a change
@@ -26,10 +81,10 @@ is covered by tests. It is built to be a clear signal, not a dashboard.
   covered, with the uncovered ones listed as `file:line`. Whoever or whatever reads it
   (a reviewer, a script, an AI agent) knows what to do next without interpreting
   charts or trends.
-- **Machine-readable and gateable.** JSON and YAML output, `--collapse-ranges` for a
-  compact list, and exit codes from `--fail-under-patch` and `--fail-under-lines`
-  make it easy to automate, including in a loop where an agent adds tests until the
-  gate passes.
+- **Machine-readable and gateable.** JSON and YAML output with a
+  [documented schema](docs/reference.md#output-schema), and exit codes from
+  `--fail-under-patch` and `--fail-under-lines`, make it easy to automate, including in
+  a loop where an agent adds tests until the gate passes.
 - **No service in the loop, so no outage to block you.** It reads report files from
   disk and sends nothing anywhere: no account, upload token or server to be down, slow
   or rate-limited. It runs on the same runners as your other CI jobs, so the coverage
@@ -79,11 +134,38 @@ for confidence in the tests themselves.
 cargo install patchcov
 ```
 
-Prebuilt binaries for Linux (glibc 2.35 or newer), macOS and Windows (x86_64 MSVC)
-are attached to each [GitHub release](https://github.com/rust-works/patchcov/releases),
-along with SHA-256 checksums. Linux and macOS builds use `.tar.gz` archives; Windows
-builds use `patchcov-v<version>-x86_64-pc-windows-msvc.zip`. Extract the Windows ZIP
-and add the directory containing `patchcov.exe` to your `PATH`.
+Prebuilt binaries for Linux (glibc 2.35 or newer; x86_64 and aarch64), macOS (Apple silicon
+and Intel) and Windows (x86_64 MSVC) are attached to each
+[GitHub release](https://github.com/rust-works/patchcov/releases), along with SHA-256
+checksums. Linux and macOS builds use `.tar.gz` archives; Windows builds use
+`patchcov-v<version>-x86_64-pc-windows-msvc.zip`. Extract the Windows ZIP and add the
+directory containing `patchcov.exe` to your `PATH`. The binaries are not signed or
+notarized, so macOS quarantines a downloaded one; `cargo install` avoids that.
+
+`cargo binstall` is not set up for this crate: the release archives do not follow
+cargo-binstall's default naming, and the crate has no binstall metadata, so `cargo binstall
+patchcov` would build from source. Use `cargo install patchcov` or a release archive.
+
+### Verify a download
+
+Each archive has a `.sha256` file next to it holding `<hash>  <archive name>`. Download both
+into one directory and check the archive against it.
+
+```bash
+# Linux and macOS
+shasum -a 256 -c patchcov-v0.2.0-x86_64-unknown-linux-gnu.tar.gz.sha256
+# patchcov-v0.2.0-x86_64-unknown-linux-gnu.tar.gz: OK
+```
+
+```powershell
+# Windows (PowerShell)
+$expected = (Get-Content patchcov-v0.2.0-x86_64-pc-windows-msvc.zip.sha256).Split(' ')[0]
+$actual = (Get-FileHash patchcov-v0.2.0-x86_64-pc-windows-msvc.zip -Algorithm SHA256).Hash
+if ($actual -eq $expected) { 'OK' } else { 'MISMATCH' }
+```
+
+Checksums are published beside the archives, so they catch a corrupted download but not a
+compromised release; they are not a signature.
 
 ## Use
 
@@ -105,9 +187,25 @@ patchcov merge shard-1.lcov shard-2.lcov -o merged.lcov
 patchcov lint-markers
 ```
 
-The full guide is in [docs/usage.md](docs/usage.md): input formats and path mapping
-for non-Rust languages, gating semantics, sharded runs, the ignore list, source
-markers and the flag reference.
+**Measure the report at the revision you diff.** The report must come from a test run on
+the code at `HEAD` (or at `--head-ref`). A report measured on older code gives line numbers
+that no longer match the diff, and patchcov cannot tell: the result is silently wrong. The
+merge base must also resolve, which needs full git history in CI (`fetch-depth: 0`).
+
+The command prints the report to stdout and exits `0`, or `1` when a gate or anything else
+fails (and `2` for a usage error), so a CI job can post the comment and then fail. See the
+[exit codes](docs/reference.md#exit-codes).
+
+Where to go next:
+
+- [Usage](docs/usage.md): input formats and path mapping for non-Rust languages, gating,
+  sharded runs, the ignore list and source markers, CI.
+- [Reference](docs/reference.md): every flag, the `.patchcov/config.yaml` keys, the JSON/YAML
+  schema, exit codes and environment variables.
+- [Explanation](docs/explanation.md): why the total differs from llvm-cov's summary, how
+  `tolerate` masking and diff scoping work.
+- [Troubleshooting](docs/troubleshooting.md): an empty result, no files matching, an
+  unresolvable merge base, a report from the wrong revision.
 
 ## GitHub Action
 
@@ -138,20 +236,75 @@ See the action's README for thin mode, sharded runs and its inputs.
 
 ## Configuration
 
-Settings that belong to a repository live in `.patchcov/config.yaml`, found by
-walking up from the repository root. `--config-dir` and the `PATCHCOV_CONFIG_DIR`
-environment variable override the location. There are no user-level or
-machine-level settings, so what a gate reports is visible in version control.
+Settings that belong to a repository live in `.patchcov/config.yaml`, found by walking up from
+the repository root. `--config-dir` and the `PATCHCOV_CONFIG_DIR` environment variable
+override the location. There are no user-level or machine-level settings, so what a gate
+reports is visible in version control.
+
+| Key | Purpose |
+|-----|---------|
+| `diff.ignore-filename-regex` | Regexes for files to exclude from both reports; unioned with the flag |
+| `diff.path-mappings` | `from`/`to` directory replacements for reports whose paths differ from git's |
+| `diff.require-measured` | Globs of touched files that must appear in a report; unioned with the flag |
+| `lint-markers.include` | Globs narrowing which files `lint-markers` scans; replaced by the flag |
+
+```yaml
+# .patchcov/config.yaml
+diff:
+  ignore-filename-regex:
+    - 'src/bits/popcount\.rs'   # CPU-gated, flaps between runners
+lint-markers:
+  include:
+    - '**/*.rs'
+```
+
+Types, defaults and how each key combines with its command-line flag are in the
+[config reference](docs/reference.md#patchcovconfigyaml). This repository's own
+[`.patchcov/config.yaml`](.patchcov/config.yaml) is a working example.
 
 ## Library
 
-The analysis is a library as well as a command: `patchcov::parse` reads a report,
-`patchcov::DiffModel` builds the added-line sets from `git2`, `patchcov::analyze`
-attributes coverage to the diff and `patchcov::render` formats the result.
+The analysis is a library as well as a command, published on crates.io with API documentation
+at <https://docs.rs/patchcov>. `patchcov::parse` reads a report, `patchcov::DiffModel` builds
+the added-line sets from `git2`, `patchcov::analyze` attributes coverage to the diff and
+`patchcov::render` formats the result:
+
+```rust
+use git2::Repository;
+use patchcov::{analyze, parse, render, DiffModel, DiffScope, OutputFormat, RenderOptions};
+
+fn main() -> anyhow::Result<()> {
+    let repo = Repository::open(".")?;
+
+    // Read a report (the format is detected from its content), then make its paths
+    // repo-relative so they line up with git's.
+    let mut head = parse(&std::fs::read_to_string("head.lcov")?, None)?;
+    if let Some(workdir) = repo.workdir() {
+        head.strip_prefix(workdir);
+    }
+
+    // The lines added between a base revision and HEAD.
+    let diff = DiffModel::between(&repo, "origin/main", None)?;
+
+    // Attribute coverage to the diff. Pass a baseline report instead of `None` for deltas.
+    let result = analyze(&head, &diff, None, DiffScope::DiffOnly);
+    println!("patch coverage: {:?}", result.patch.percent());
+    println!("{}", render(&result, &RenderOptions::default(), OutputFormat::Markdown)?);
+    Ok(())
+}
+```
+
+This example is compiled as a doctest in [`src/lib.rs`](src/lib.rs), which also holds the
+architecture overview. **The API is not stable at 0.x.** Breaking changes are allowed in minor
+releases (`0.2` to `0.3`), and the release process runs `cargo-semver-checks` so each one is
+accompanied by a minor version bump. Depend on `patchcov = "~0.2"` if you need to avoid surprises,
+and read the [changelog](CHANGELOG.md) when upgrading. The command line is
+the better-supported interface.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for local checks and the merge queue flow.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to build, run the tests and add a fixture, and
+for the merge queue flow.
 
 ## Releasing
 

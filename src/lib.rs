@@ -13,6 +13,42 @@
 //!    alignment from `git2`.
 //! 3. [`analysis::analyze`] attributes coverage to the diff.
 //! 4. [`render::render`] emits markdown / YAML / JSON.
+//!
+//! The command line in [`cli`] is a thin layer over these four steps, plus source
+//! markers ([`markers`]), the ignore list and `config.yaml` ([`config`]), path
+//! mapping ([`paths`]) and shard merging ([`merge`]). `src/cli/diff.rs` shows the
+//! whole pipeline in order.
+//!
+//! # Example
+//!
+//! Attribute a coverage report to the changes since `origin/main`:
+//!
+//! ```no_run
+//! use git2::Repository;
+//! use patchcov::{analyze, parse, render, DiffModel, DiffScope, OutputFormat, RenderOptions};
+//!
+//! fn main() -> anyhow::Result<()> {
+//!     let repo = Repository::open(".")?;
+//!
+//!     // Read a report (the format is detected from its content), then make its paths
+//!     // repo-relative so they line up with git's.
+//!     let mut head = parse(&std::fs::read_to_string("head.lcov")?, None)?;
+//!     if let Some(workdir) = repo.workdir() {
+//!         head.strip_prefix(workdir);
+//!     }
+//!
+//!     // The lines added between a base revision and HEAD.
+//!     let diff = DiffModel::between(&repo, "origin/main", None)?;
+//!
+//!     // Attribute coverage to the diff. Pass a baseline report instead of `None` for deltas.
+//!     let result = analyze(&head, &diff, None, DiffScope::DiffOnly);
+//!     println!("patch coverage: {:?}", result.patch.percent());
+//!     println!("{}", render(&result, &RenderOptions::default(), OutputFormat::Markdown)?);
+//!     Ok(())
+//! }
+//! ```
+//!
+//! The API is not stable at 0.x: breaking changes arrive in minor releases.
 
 pub mod analysis;
 pub mod cli;
