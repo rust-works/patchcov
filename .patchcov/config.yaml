@@ -1,0 +1,7 @@
+# patchcov's own settings for this repository. See docs/reference.md#patchcovconfigyaml.
+#
+# The docs describe the marker syntax in prose, which `patchcov lint-markers` would
+# otherwise report as malformed markers, so scan Rust sources only.
+lint-markers:
+  include:
+    - '**/*.rs'
