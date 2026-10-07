@@ -35,6 +35,8 @@ pub struct FileDiff {
     pub new_path: String,
     /// Whether the file is newly added in head.
     pub is_new: bool,
+    /// Whether the file was deleted from head.
+    pub is_deleted: bool,
     /// Whether the file was renamed (and possibly modified).
     pub is_rename: bool,
     /// New-side line numbers added or modified by the diff.
@@ -63,6 +65,7 @@ impl FileDiff {
             old_path,
             new_path: new_path.into(),
             is_new,
+            is_deleted: false,
             is_rename,
             added,
             removed,
@@ -169,6 +172,7 @@ impl DiffModel {
                             old_path: old_path.filter(|_| status != Delta::Added),
                             new_path,
                             is_new: status == Delta::Added,
+                            is_deleted: status == Delta::Deleted,
                             is_rename: status == Delta::Renamed || status == Delta::Copied,
                             added: BTreeSet::new(),
                             removed: BTreeSet::new(),
@@ -261,6 +265,7 @@ mod tests {
             old_path: Some("f".into()),
             new_path: "f".into(),
             is_new: false,
+            is_deleted: false,
             is_rename: false,
             added: BTreeSet::new(),
             removed: BTreeSet::new(),

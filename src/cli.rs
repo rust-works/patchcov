@@ -70,6 +70,7 @@ mod tests {
                 no_explanation: false,
                 format: None,
                 fail_under_patch: None,
+                fail_on_unmeasured: Vec::new(),
                 fail_under_lines: None,
                 strip_prefix: None,
                 ignore_filename_regex: Vec::new(),

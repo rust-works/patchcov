@@ -257,6 +257,13 @@ fn render_markdown(diff: &CoverageDiff, opts: &RenderOptions) -> String {
     // Also without a baseline: `ignore` still shapes the total and the patch.
     render_markers(diff, &mut out);
     render_excluded(diff, &mut out);
+    if !diff.unmeasured_files.is_empty() {
+        out.push_str(&format!("<details>\n<summary>Touched files absent from every coverage report ({})</summary>\n\n", diff.unmeasured_files.len()));
+        for path in &diff.unmeasured_files {
+            out.push_str(&format!("- `{path}`\n"));
+        }
+        out.push_str("\nThese files may contain no executable code or may have been omitted from the coverage run.\n\n</details>\n\n");
+    }
 
     render_patch_section(diff, opts, &mut out);
 
@@ -567,6 +574,7 @@ struct CoverageDiffView {
     patch_coverage: PatchView,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     uncovered_new_lines: Vec<String>,
+    unmeasured_files: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     project_delta: Option<ProjectDeltaView>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -758,6 +766,7 @@ impl CoverageDiffView {
             explanation: (!opts.no_explanation).then(explanation),
             patch_coverage,
             uncovered_new_lines,
+            unmeasured_files: diff.unmeasured_files.clone(),
             project_delta,
             indirect_changes,
             markers,
@@ -781,9 +790,10 @@ impl CoverageDiffView {
         let has_excluded = self.excluded_files.is_some();
         for field in &mut explanation.fields {
             field.present = match field.name.as_str() {
-                "patch_coverage.percent" | "patch_coverage.covered" | "patch_coverage.total" => {
-                    true
-                }
+                "patch_coverage.percent"
+                | "patch_coverage.covered"
+                | "patch_coverage.total"
+                | "unmeasured_files[]" => true,
                 "patch_coverage.files[].path" => has_patch_files,
                 "uncovered_new_lines[]" => has_uncovered,
                 "project_delta.total_after" | "project_delta.files[].path" => has_baseline,
@@ -847,6 +857,10 @@ fn explanation() -> FieldExplanation {
                  reports) or `tolerate` (lines kept in the percentages, but their coverage flips \
                  masked). Where a region was tolerated, `delta` is computed from \
                  `after_effective`, not from the displayed `after`.",
+            ),
+            field(
+                "unmeasured_files[]",
+                "Non-deleted touched files absent under either name from every supplied report. Explicit filename exclusions are omitted. May be non-code or uninstrumented code; only matching require-measured globs fail the gate.",
             ),
             field(
                 "excluded_files.paths[]",

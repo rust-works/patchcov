@@ -578,6 +578,43 @@ low on this repository's own test suite), and other lcov consumers may do the sa
 A join has no empty-shard check either: a failed shard just makes the total look
 slightly worse. `patchcov merge` has neither problem.
 
+## Requiring touched files to be measured
+
+A report can omit a changed file entirely, for example when a crate or test target
+was skipped. Patch coverage alone cannot distinguish this from a documentation
+change. Markdown lists these paths in a collapsed “Touched files absent from every
+coverage report” note. JSON and YAML expose a sorted `unmeasured_files` array
+(empty when every eligible file was reported).
+
+Opt in to failure for code paths with repeatable globs:
+
+```sh
+patchcov diff --report coverage.lcov --fail-under-patch 80 \
+  --fail-on-unmeasured 'src/**/*.rs' --fail-on-unmeasured 'lib/**/*.py'
+```
+
+Or persist the policy in `.patchcov/config.yaml`:
+
+```yaml
+diff:
+  require-measured:
+    - 'src/**/*.rs'
+    - 'lib/**/*.py'
+```
+
+CLI and config globs are unioned. They match complete repo-relative paths:
+`*` stays within a directory, while `**` traverses directories (`src/**/*.rs`
+also matches `src/a.rs`). Invalid or empty globs are errors. With no globs,
+missing files leave existing exit codes and coverage gates unchanged.
+
+Presence in any head shard or baseline report counts as measured, under either
+name of a renamed file, even when its entry has no executable lines. Deleted
+files and paths explicitly excluded by `ignore-filename-regex` under either
+rename name are omitted.
+Source ignore markers do not turn a reported file into an unmeasured file.
+This policy checks report presence; it does not prove every executable line was
+instrumented, or require that baseline-only files appear in the head report.
+
 ## Excluding files (CPU-conditional / non-deterministic coverage)
 
 Some source files have coverage that is **inherently non-deterministic across
@@ -851,6 +888,7 @@ first with [`patchcov merge`](#merging-shards-into-one-file).
 | `--baseline-report-format <FMT>` | Format of `--baseline-report` (auto-detected by default) |
 | `-o, --output <FMT>` | `markdown` (default) \| `yaml` \| `json` |
 | `--fail-under-patch <PCT>` | Exit non-zero when patch coverage is below `<PCT>` |
+| `--fail-on-unmeasured <GLOB>` | Exit non-zero for matching touched files absent from every report (repeatable; unioned with `diff.require-measured`) |
 | `--fail-under-lines <PCT>` | Exit non-zero when overall line coverage is below `<PCT>`, or the report has no executable lines |
 | `--collapse-ranges` | Collapse consecutive uncovered new lines into ranges |
 | `--all-files` | Report deltas/indirect changes for all files, not just touched ones |

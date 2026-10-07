@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
 use git2::Repository;
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use regex::RegexSet;
 
 use crate::analysis::{analyze_with_markers, ExcludedFiles, Markers};
@@ -133,6 +134,11 @@ pub struct DiffCommand {
     /// Fail (non-zero exit) when patch coverage is below this percentage.
     #[arg(long, value_name = "PCT")]
     pub fail_under_patch: Option<f64>,
+
+    /// Fail when a touched file absent from every report matches this repo-relative glob.
+    /// Repeatable; unioned with config.yaml diff.require-measured. Use ** for directories.
+    #[arg(long, value_name = "GLOB")]
+    pub fail_on_unmeasured: Vec<String>,
 
     /// Fail (non-zero exit) when overall line coverage is below this percentage.
     ///
@@ -379,6 +385,9 @@ struct CoverageDiffConfig {
     /// Explicit report directory prefixes mapped before strip-prefix and filters.
     #[serde(default)]
     path_mappings: Vec<PathMapping>,
+    /// Globs requiring touched files to appear in at least one report.
+    #[serde(default)]
+    require_measured: Vec<String>,
     /// Repo-relative path regexes excluded from both head and baseline reports,
     /// unioned with `--ignore-filename-regex` and applied after `--strip-prefix`
     /// normalisation. Same unanchored semantics as the flag.
@@ -413,6 +422,8 @@ pub struct DiffOutcome {
     pub patch_percent: Option<f64>,
     /// Whether `--fail-under-patch` was set and patch coverage fell below it.
     pub below_gate: bool,
+    /// Unmeasured paths matching the strict CLI/config policy.
+    pub unmeasured_failures: Vec<String>,
     /// Overall line coverage percentage of the head report (`None` when it has
     /// no executable lines).
     pub line_percent: Option<f64>,
@@ -470,6 +481,9 @@ impl DiffCommand {
                 ),
             });
         }
+        if !outcome.unmeasured_failures.is_empty() {
+            failures.push(format!("touched files absent from every coverage report (--fail-on-unmeasured / diff.require-measured): {}", outcome.unmeasured_failures.join(", ")));
+        }
         failures
     }
 
@@ -504,6 +518,7 @@ impl DiffCommand {
         paths::validate(&config.path_mappings)?;
         let ignore = self.compile_ignore(&config.ignore_filename_regex)?;
 
+        let require_measured = self.compile_require_measured(&config.require_measured)?;
         let mut warnings = Vec::new();
         let mut excluded = ExcludedFiles::default();
         let head = self.load_head(
@@ -525,6 +540,31 @@ impl DiffCommand {
             )?),
             None => None,
         };
+
+        let diff = DiffModel::between(&repo, &base_ref, self.head_ref.as_deref())?;
+        // Preserve report presence before source markers can remove every line.
+        let unmeasured_files = crate::analysis::unmeasured_files(&head, &diff, baseline.as_ref())
+            .into_iter()
+            .filter(|path| {
+                ignore.as_ref().is_none_or(|set| {
+                    !set.is_match(path)
+                        && diff
+                            .files
+                            .get(path)
+                            .and_then(|file| file.old_path.as_ref())
+                            .is_none_or(|old| !set.is_match(old))
+                })
+            })
+            .collect::<Vec<_>>();
+        let unmeasured_failures = unmeasured_files
+            .iter()
+            .filter(|path| {
+                require_measured
+                    .as_ref()
+                    .is_some_and(|set| set.is_match(path))
+            })
+            .cloned()
+            .collect();
 
         // Source markers are read from each revision's *own* source, so no line
         // number is ever stored and a region that moved between base and head
@@ -548,7 +588,6 @@ impl DiffCommand {
         // then be reported as applied without having applied to anything.
         markers.head.retain(|path, _| head.files.contains_key(path));
 
-        let diff = DiffModel::between(&repo, &base_ref, self.head_ref.as_deref())?;
         let scope = if self.all_files {
             DiffScope::All
         } else {
@@ -557,6 +596,7 @@ impl DiffCommand {
         let mut result = analyze_with_markers(&head, &diff, baseline.as_ref(), scope, &markers);
         excluded.resolve(&diff);
         result.excluded = excluded;
+        result.unmeasured_files = unmeasured_files;
 
         let opts = self.render_options();
         let rendered = render(&result, &opts, self.output.into())?;
@@ -581,6 +621,7 @@ impl DiffCommand {
             rendered,
             patch_percent,
             below_gate,
+            unmeasured_failures,
             line_percent,
             below_line_gate,
             warnings,
@@ -711,6 +752,27 @@ impl DiffCommand {
         Ok(Some(set))
     }
 
+    /// Compiles the union of CLI and config policies; invalid/empty globs fail loudly.
+    fn compile_require_measured(&self, config: &[String]) -> Result<Option<GlobSet>> {
+        let mut builder = GlobSetBuilder::new();
+        if self.fail_on_unmeasured.is_empty() && config.is_empty() {
+            return Ok(None);
+        }
+        for pattern in self.fail_on_unmeasured.iter().chain(config) {
+            anyhow::ensure!(
+                !pattern.is_empty(),
+                "empty glob in --fail-on-unmeasured / diff.require-measured"
+            );
+            builder.add(GlobBuilder::new(pattern).literal_separator(true).build()
+                .with_context(|| format!("invalid glob `{pattern}` in --fail-on-unmeasured / diff.require-measured"))?);
+        }
+        Ok(Some(
+            builder
+                .build()
+                .context("could not compile require-measured globs")?,
+        ))
+    }
+
     /// Builds the render options, falling back to the `COVERAGE_*` environment
     /// variables CI sets when a flag is not supplied.
     fn render_options(&self) -> RenderOptions {
@@ -807,6 +869,7 @@ mod tests {
             no_explanation: false,
             format: None,
             fail_under_patch: None,
+            fail_on_unmeasured: Vec::new(),
             fail_under_lines: None,
             strip_prefix: None,
             ignore_filename_regex: Vec::new(),
@@ -840,6 +903,124 @@ mod tests {
         }
         fs::write(config_dir.join("config.yaml"), body).unwrap();
         config_dir
+    }
+
+    #[test]
+    fn unmeasured_files_render_and_gate_only_matching_policy() {
+        let (_dir, repo, base) = repo_with_added_file();
+        let report = repo.join("head.lcov");
+        fs::write(&report, "SF:other.rs\nDA:1,1\nend_of_record\n").unwrap();
+        let mut cmd = command(report, &base);
+        cmd.fail_under_patch = Some(80.0);
+        let outcome = cmd.run(Some(&repo)).unwrap();
+        assert!(!outcome.below_gate);
+        assert!(cmd.gate_failures(&outcome).is_empty());
+        assert!(outcome
+            .rendered
+            .contains("Touched files absent from every coverage report (1)"));
+        assert!(outcome.rendered.contains("`b.rs`"));
+        for format in [OutputFormatArg::Json, OutputFormatArg::Yaml] {
+            cmd.output = format;
+            let outcome = cmd.run(Some(&repo)).unwrap();
+            let value: serde_json::Value = if format == OutputFormatArg::Json {
+                serde_json::from_str(&outcome.rendered).unwrap()
+            } else {
+                serde_yaml::from_str(&outcome.rendered).unwrap()
+            };
+            assert_eq!(value["unmeasured_files"], serde_json::json!(["b.rs"]));
+        }
+        cmd.fail_on_unmeasured = vec!["docs/**".into()];
+        assert!(cmd.run(Some(&repo)).unwrap().unmeasured_failures.is_empty());
+        cmd.fail_on_unmeasured.push("**/*.rs".into());
+        let outcome = cmd.run(Some(&repo)).unwrap();
+        assert_eq!(outcome.unmeasured_failures, ["b.rs"]);
+        assert!(cmd.gate_failures(&outcome)[0].contains("b.rs"));
+        assert!(cmd.execute(Some(&repo)).is_err());
+    }
+
+    #[test]
+    fn require_measured_config_unions_cli_and_validates_before_loading() {
+        let (_dir, repo, base) = repo_with_added_file();
+        let dir = repo.join(".patchcov");
+        fs::create_dir(&dir).unwrap();
+        fs::write(
+            dir.join("config.yaml"),
+            "diff:\n  require-measured: ['**/*.rs']\n",
+        )
+        .unwrap();
+        let report = repo.join("head.lcov");
+        fs::write(&report, "SF:other.rs\nDA:1,1\nend_of_record\n").unwrap();
+        let mut cmd = command(report, &base);
+        cmd.config_dir = Some(dir);
+        cmd.fail_on_unmeasured = vec!["docs/**".into()];
+        assert_eq!(cmd.run(Some(&repo)).unwrap().unmeasured_failures, ["b.rs"]);
+        cmd.report = vec![repo.join("missing.lcov")];
+        for pattern in ["[", ""] {
+            cmd.fail_on_unmeasured = vec![pattern.into()];
+            assert!(cmd
+                .run(Some(&repo))
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("glob"));
+        }
+        let set = cmd.compile_require_measured(&["src/**/*.rs".into()]);
+        assert!(set.is_err()); // invalid CLI policy still takes precedence
+        cmd.fail_on_unmeasured.clear();
+        let set = cmd
+            .compile_require_measured(&["src/**/*.rs".into()])
+            .unwrap()
+            .unwrap();
+        assert!(set.is_match("src/a.rs"));
+        assert!(set.is_match("src/nested/a.rs"));
+        assert!(!set.is_match("docs/a.rs"));
+        assert!(!set.is_match("src/a.md"));
+    }
+
+    #[test]
+    fn unmeasured_exclusions_baseline_shards_and_markers() {
+        let (_dir, repo, base) = repo_with_added_file();
+        let report = repo.join("head.lcov");
+        fs::write(&report, "SF:other.rs\nDA:1,1\nend_of_record\n").unwrap();
+        let mut cmd = command(report, &base);
+        cmd.fail_on_unmeasured = vec!["**/*.rs".into()];
+        cmd.ignore_filename_regex = vec!["^b\\.rs$".into()];
+        assert!(cmd.run(Some(&repo)).unwrap().unmeasured_failures.is_empty());
+        cmd.ignore_filename_regex.clear();
+        let measured = write_head_lcov(&repo);
+        // write_head_lcov overwrites head.lcov, so restore unrelated first report.
+        let unrelated = repo.join("other.lcov");
+        fs::write(&unrelated, "SF:other.rs\nDA:1,1\nend_of_record\n").unwrap();
+        cmd.report = vec![unrelated];
+        cmd.baseline_report = Some(measured.clone());
+        assert!(cmd.run(Some(&repo)).unwrap().unmeasured_failures.is_empty());
+        cmd.baseline_report = None;
+        cmd.report.push(measured);
+        assert!(cmd.run(Some(&repo)).unwrap().unmeasured_failures.is_empty());
+        fs::write(
+            repo.join("b.rs"),
+            format!(
+                "// {} coverage ignore reason=\"generated\"\none\n// {} coverage end\n",
+                "patchcov:", "patchcov:"
+            ),
+        )
+        .unwrap();
+        assert!(cmd.run(Some(&repo)).unwrap().unmeasured_failures.is_empty());
+    }
+
+    #[test]
+    fn fail_on_unmeasured_parses_repeatable_globs() {
+        let cmd = DiffCommand::try_parse_from([
+            "diff",
+            "--report",
+            "r.lcov",
+            "--fail-on-unmeasured",
+            "src/**/*.rs",
+            "--fail-on-unmeasured",
+            "lib/**/*.py",
+        ])
+        .unwrap();
+        assert_eq!(cmd.fail_on_unmeasured, ["src/**/*.rs", "lib/**/*.py"]);
     }
 
     #[test]
