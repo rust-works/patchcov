@@ -110,7 +110,9 @@ pub enum Warning {
     /// A report's paths match no tracked file, and `--allow-path-mismatch` let the
     /// run continue.
     PathMismatch {
-        /// The coverage report, as the message names it.
+        /// The coverage report, as the message names it: a display string, with
+        /// U+FFFD for each invalid byte sequence of a non-UTF-8 path, not a path
+        /// identifier.
         report: String,
         /// How many file paths the report has.
         file_count: usize,

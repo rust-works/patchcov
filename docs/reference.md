@@ -204,8 +204,8 @@ Each `kind` adds fields after `message`, listed below.
 | `kind` | When | Fields besides `level`, `kind` and `message` |
 |--------|------|----------------------------------------------|
 | `deprecated` | A deprecated flag was used (`--format`, `--fail-on-path-mismatch`) | `flag`, the flag with its dashes; `replacement`, what to use instead, or `null` if nothing replaces it |
-| `path-mismatch` | `diff`: a report's paths match no tracked file, and `--allow-path-mismatch` or `diff.allow-path-mismatch` let the run continue | `report`, the report as the message names it; `file_count`, how many file paths it has; `unmatched`, the first three of its normalized paths (the ones the message samples) |
-| `shard-root` | `merge`: a shard was measured under a different workspace root | `shard`, the shard as the message names it; `strip_prefix`, the prefix it was expected under, without a trailing `/`; `absolute_paths`, how many absolute file paths it has, none of them under the prefix |
+| `path-mismatch` | `diff`: a report's paths match no tracked file, and `--allow-path-mismatch` or `diff.allow-path-mismatch` let the run continue | `report`, the report as the message names it ([a display string](#paths-in-warning-fields)); `file_count`, how many file paths it has; `unmatched`, the first three of its normalized paths (the ones the message samples) |
+| `shard-root` | `merge`: a shard was measured under a different workspace root | `shard`, the shard as the message names it ([a display string](#paths-in-warning-fields)); `strip_prefix`, the prefix it was expected under, without a trailing `/` ([a display string](#paths-in-warning-fields) too); `absolute_paths`, how many absolute file paths it has, none of them under the prefix |
 | `glob-no-match` | `lint-markers`: its globs matched no tracked file, so nothing was checked | `globs`, the globs; `origin`, where they came from: `"--include"` or `"lint-markers.include"` (the config key) |
 
 Another example, a shard under another root:
@@ -223,6 +223,19 @@ is `"error"` or `"info"`, and the failure is `"error"` with a `code`. The failur
 line of stderr. The warning about an invalid `PATCHCOV_ERROR_FORMAT` is
 the one line that is not JSON, since the format it asks for was not accepted; parse only the lines
 that start with `{` and keep the objects that have a `level`.
+
+#### Paths in warning fields
+
+`report`, `shard` and `strip_prefix` are filesystem paths written as display strings: the text the
+message prints for them (`strip_prefix` without its trailing `/`), not path identifiers. JSON strings
+must be UTF-8, so in a path that is not valid UTF-8 each invalid sequence of bytes is replaced with
+one U+FFFD (the replacement character). The value may then name no file that exists, and two
+different paths can give the same value. They are also the path as patchcov resolved it, which can
+differ from the argument as typed (a relative path may be joined to the repository root), so do
+not match them against your own argument text; keep track of which report or shard you ran
+instead. No lossless form of these paths is emitted today: non-UTF-8 report or shard paths are
+rare, and a field for them can be added later without changing the existing ones. `unmatched` is
+not affected: it holds the file paths read from inside the report, which are already strings.
 
 ### Findings and summary
 
