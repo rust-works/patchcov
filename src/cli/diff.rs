@@ -10,7 +10,7 @@ use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use regex::RegexSet;
 
 use super::exit::{gate_error, Classify, ExitKind, GateFailure};
-use super::warn::{warn, WarningKind};
+use super::warn::{warn, DeprecatedFlag, Warning};
 use crate::analysis::{analyze_with_markers, ExcludedFiles, Markers};
 use crate::config::{load_config_content, resolve_config_dir_at};
 use crate::format::resolve as resolve_format;
@@ -416,7 +416,7 @@ struct ReportPathCheck<'a> {
     root: &'a Path,
     revision: Revision<'a>,
     strict: bool,
-    warnings: &'a mut Vec<String>,
+    warnings: &'a mut Vec<Warning>,
 }
 
 impl ReportPathCheck<'_> {
@@ -452,23 +452,17 @@ impl ReportPathCheck<'_> {
             }
         };
         if !matches {
-            let sample = report
-                .files
-                .keys()
-                .take(3)
-                .map(|p| format!("`{p}`"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let message = format!(
-                "coverage report {}: none of its {} file path(s) matches a tracked file in the repository; unmatched normalized paths: {sample}; use --strip-prefix or diff.path-mappings to make paths repo-relative",
-                label.display(), report.files.len()
-            );
+            let warning = Warning::PathMismatch {
+                report: label.display().to_string(),
+                file_count: report.files.len(),
+                unmatched: report.files.keys().take(3).cloned().collect(),
+            };
             if self.strict {
                 return Err(ExitKind::PathMismatch.error(format!(
-                    "{message} (or pass --allow-path-mismatch / set diff.allow-path-mismatch to warn instead)"
+                    "{warning} (or pass --allow-path-mismatch / set diff.allow-path-mismatch to warn instead)"
                 )));
             }
-            self.warnings.push(message);
+            self.warnings.push(warning);
         }
         Ok(())
     }
@@ -582,7 +576,7 @@ pub struct DiffOutcome {
     /// Non-fatal problems found while loading the reports (for example a shard
     /// measured under a different workspace root). [`DiffCommand::execute`]
     /// prints them to stderr.
-    pub warnings: Vec<String>,
+    pub warnings: Vec<Warning>,
 }
 
 impl DiffCommand {
@@ -592,21 +586,15 @@ impl DiffCommand {
     /// (`None` = current working directory).
     pub fn execute(mut self, repo: Option<&Path>) -> Result<()> {
         if let Some(format) = self.format.take() {
-            warn(
-                WarningKind::Deprecated,
-                "--format is deprecated; use -o/--output instead",
-            );
+            warn(&Warning::deprecated(DeprecatedFlag::Format));
             self.output = format;
         }
         if self.fail_on_path_mismatch {
-            warn(
-                WarningKind::Deprecated,
-                "--fail-on-path-mismatch is deprecated and has no effect; a path mismatch is an error unless --allow-path-mismatch or diff.allow-path-mismatch is set",
-            );
+            warn(&Warning::deprecated(DeprecatedFlag::FailOnPathMismatch));
         }
         let outcome = self.run(repo)?;
         for warning in &outcome.warnings {
-            warn(WarningKind::PathMismatch, warning);
+            warn(warning);
         }
         println!("{}", outcome.rendered);
         let failures = self.gate_failures(&outcome);
@@ -1928,8 +1916,10 @@ mod tests {
         cmd.allow_path_mismatch = true;
         let outcome = cmd.run(Some(&repo)).unwrap();
         assert_eq!(outcome.warnings.len(), 1, "{:?}", outcome.warnings);
-        assert!(outcome.warnings[0].contains("two.lcov"));
-        assert!(outcome.warnings[0].contains("--strip-prefix"));
+        let warning = outcome.warnings[0].to_string();
+        assert!(warning.contains("two.lcov"), "{warning}");
+        assert!(warning.contains("--strip-prefix"), "{warning}");
+        assert_eq!(outcome.warnings[0].kind(), "path-mismatch");
     }
 
     #[test]
@@ -1956,7 +1946,7 @@ mod tests {
         cmd.allow_path_mismatch = true;
         let outcome = cmd.run(Some(&repo)).unwrap();
         assert_eq!(outcome.warnings.len(), 1);
-        assert!(outcome.warnings[0].contains("only.lcov"));
+        assert!(outcome.warnings[0].to_string().contains("only.lcov"));
     }
 
     #[test]
@@ -2650,13 +2640,20 @@ mod tests {
         cmd.allow_path_mismatch = true;
         let outcome = cmd.run(Some(&repo)).unwrap();
         assert_eq!(outcome.warnings.len(), 1);
-        let warning = &outcome.warnings[0];
+        assert_eq!(
+            outcome.warnings[0],
+            Warning::PathMismatch {
+                report: repo.join("baseline.lcov").display().to_string(),
+                file_count: 4,
+                unmatched: ["wrong/a.rs", "wrong/b.rs", "wrong/c.rs"]
+                    .map(String::from)
+                    .to_vec(),
+            }
+        );
+        let warning = outcome.warnings[0].to_string();
         for text in [
-            "baseline.lcov",
             "4 file path(s)",
-            "wrong/a.rs",
-            "wrong/b.rs",
-            "wrong/c.rs",
+            "`wrong/a.rs`, `wrong/b.rs`, `wrong/c.rs`;",
         ] {
             assert!(warning.contains(text), "{warning}");
         }

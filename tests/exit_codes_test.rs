@@ -741,8 +741,15 @@ fn json_warnings(output: &Output) -> Vec<serde_json::Value> {
 }
 
 /// Runs `head` and `args` in both formats and checks that the single warning is
-/// the same message, of the given `kind`, and that the run ends as `code` says.
-fn assert_json_warning(fx: &Fixture, head: &[&str], args: &[&str], kind: &str) {
+/// the same message, of the given `kind`, with exactly the `fields` after
+/// `level`, `kind` and `message`, and that the run succeeds.
+fn assert_json_warning(
+    fx: &Fixture,
+    head: &[&str],
+    args: &[&str],
+    kind: &str,
+    fields: serde_json::Value,
+) {
     let plain = run(fx.root(), head, args);
     let mut flagged: Vec<&str> = head.to_vec();
     flagged.extend(["--error-format", "json"]);
@@ -756,7 +763,16 @@ fn assert_json_warning(fx: &Fixture, head: &[&str], args: &[&str], kind: &str) {
     assert_eq!(objects.len(), 1, "{head:?}: {}", stderr(&json));
     assert_eq!(objects[0]["kind"], kind, "{head:?}");
     assert_eq!(objects[0]["message"], text[0], "{head:?}");
-    assert_eq!(objects[0].as_object().unwrap().len(), 3, "{head:?}");
+    let mut expected = serde_json::json!({
+        "level": "warning",
+        "kind": kind,
+        "message": text[0],
+    });
+    expected
+        .as_object_mut()
+        .unwrap()
+        .extend(fields.as_object().unwrap().clone());
+    assert_eq!(objects[0], expected, "{head:?}");
 }
 
 #[test]
@@ -771,6 +787,11 @@ fn an_allowed_path_mismatch_is_a_json_warning() {
         &["diff", "--base-ref", &fx.base],
         &["--report", path(&report), "--allow-path-mismatch"],
         "path-mismatch",
+        serde_json::json!({
+            "report": path(&report),
+            "file_count": 1,
+            "unmatched": ["nowhere/else.rs"],
+        }),
     );
 }
 
@@ -778,10 +799,26 @@ fn an_allowed_path_mismatch_is_a_json_warning() {
 fn a_deprecated_flag_is_a_json_warning() {
     let fx = Fixture::new();
     let report = fx.report();
-    for flag in [&["--format", "markdown"][..], &["--fail-on-path-mismatch"]] {
+    let cases = [
+        (
+            &["--format", "markdown"][..],
+            serde_json::json!({"flag": "--format", "replacement": "-o/--output"}),
+        ),
+        (
+            &["--fail-on-path-mismatch"],
+            serde_json::json!({"flag": "--fail-on-path-mismatch", "replacement": null}),
+        ),
+    ];
+    for (flag, fields) in cases {
         let mut args = vec!["--report", path(&report)];
         args.extend(flag);
-        assert_json_warning(&fx, &["diff", "--base-ref", &fx.base], &args, "deprecated");
+        assert_json_warning(
+            &fx,
+            &["diff", "--base-ref", &fx.base],
+            &args,
+            "deprecated",
+            fields,
+        );
     }
 }
 
@@ -803,6 +840,11 @@ fn a_shard_under_another_root_is_a_json_warning() {
         ],
         &[path(&shard)],
         "shard-root",
+        serde_json::json!({
+            "shard": path(&shard),
+            "strip_prefix": "/ci/workspace",
+            "absolute_paths": 1,
+        }),
     );
 }
 
@@ -814,6 +856,26 @@ fn a_glob_that_matches_nothing_is_a_json_warning() {
         &["lint-markers", "--include", "**/*.nomatch"],
         &[],
         "glob-no-match",
+        serde_json::json!({"globs": ["**/*.nomatch"], "origin": "--include"}),
+    );
+}
+
+#[test]
+fn globs_from_the_config_say_so() {
+    let fx = Fixture::new();
+    fx.file(
+        ".patchcov/config.yaml",
+        "lint-markers:\n  include:\n    - \"**/*.nomatch\"\n    - \"*.also\"\n",
+    );
+    assert_json_warning(
+        &fx,
+        &["lint-markers"],
+        &[],
+        "glob-no-match",
+        serde_json::json!({
+            "globs": ["**/*.nomatch", "*.also"],
+            "origin": "lint-markers.include",
+        }),
     );
 }
 
