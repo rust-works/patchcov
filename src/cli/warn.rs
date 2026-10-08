@@ -24,10 +24,15 @@ use crate::merge::PrefixMismatch;
 /// The format warnings are printed in, set once by `main`.
 static FORMAT: OnceLock<ErrorFormat> = OnceLock::new();
 
-/// Sets the format [`warn`] prints in. Only the first call has an effect; without
-/// one, warnings are text.
+/// Sets the format [`warn`] and [`emit`] print in. Only the first call has an
+/// effect; without one, lines are text.
 pub fn set_format(format: ErrorFormat) {
     let _ = FORMAT.set(format);
+}
+
+/// The format set by [`set_format`], or text.
+fn current_format() -> ErrorFormat {
+    FORMAT.get().copied().unwrap_or_default()
 }
 
 /// A deprecated flag that still parses.
@@ -196,46 +201,37 @@ struct WarningReport<'a> {
 
 /// Prints a warning to stderr, as a `warning: ...` line or a JSON object.
 pub fn warn(warning: &Warning) {
-    eprintln!(
-        "{}",
-        render(FORMAT.get().copied().unwrap_or_default(), warning)
-    );
+    eprintln!("{}", render(current_format(), warning));
 }
 
 /// Prints a line to stderr: `text` in the default format, `record` as one JSON
 /// object under `--error-format json`.
 pub fn emit(text: impl AsRef<str>, record: &impl Serialize) {
-    eprintln!(
-        "{}",
-        render_line(
-            FORMAT.get().copied().unwrap_or_default(),
-            text.as_ref(),
-            record
-        )
-    );
+    eprintln!("{}", render_line(current_format(), text.as_ref(), record));
 }
 
-/// The line `emit` prints.
-fn render_line(format: ErrorFormat, text: &str, record: &impl Serialize) -> String {
-    match format {
-        ErrorFormat::Text => text.to_string(),
-        // Records hold strings, numbers and options, which always serialize.
-        ErrorFormat::Json => serde_json::to_string(record).unwrap_or_default(),
-    }
-}
-
-/// The line `warn` prints.
+/// The line `warn` prints: a warning is an `emit`ted line whose text is
+/// `warning: ` and the message, and whose record is the warning object.
 fn render(format: ErrorFormat, warning: &Warning) -> String {
-    match format {
-        ErrorFormat::Text => format!("warning: {warning}"),
-        ErrorFormat::Json => serde_json::to_string(&WarningReport {
+    render_line(
+        format,
+        &format!("warning: {warning}"),
+        &WarningReport {
             level: LEVEL,
             kind: warning.kind(),
             message: warning.to_string(),
             fields: warning,
-        })
-        // Strings, numbers and lists of strings always serialize.
-        .unwrap_or_default(),
+        },
+    )
+}
+
+/// The line `emit` prints, the one place that picks between the formats.
+fn render_line(format: ErrorFormat, text: &str, record: &impl Serialize) -> String {
+    match format {
+        ErrorFormat::Text => text.to_string(),
+        // Records hold strings, numbers, options and lists of them, which always
+        // serialize.
+        ErrorFormat::Json => serde_json::to_string(record).unwrap_or_default(),
     }
 }
 
@@ -277,6 +273,24 @@ mod tests {
             line,
             "warning: --format is deprecated; use -o/--output instead"
         );
+    }
+
+    /// A warning is printed by the same renderer as any other line.
+    #[test]
+    fn a_warning_is_rendered_by_render_line() {
+        let warning = path_mismatch();
+        let report = WarningReport {
+            level: LEVEL,
+            kind: warning.kind(),
+            message: warning.to_string(),
+            fields: &warning,
+        };
+        for format in [ErrorFormat::Text, ErrorFormat::Json] {
+            assert_eq!(
+                render(format, &warning),
+                render_line(format, &format!("warning: {warning}"), &report)
+            );
+        }
     }
 
     #[derive(Serialize)]
