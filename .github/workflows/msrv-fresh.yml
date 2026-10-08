@@ -1,0 +1,38 @@
+name: MSRV (fresh resolution)
+
+# `cargo install patchcov` without `--locked` ignores Cargo.lock and resolves the newest
+# dependencies, which may need a newer rustc than the MSRV. The `msrv` job in ci.yml builds
+# the committed Cargo.lock and cannot see that. This workflow runs the same unlocked install
+# from the checkout on the MSRV toolchain, so that toolchain's own cargo does the resolving.
+#
+# It is deliberately separate from ci.yml and not a required check (see CONTRIBUTING.md): it
+# can go red because a transitive dependency released, not because of a change here, so it
+# must never gate a merge. It runs on a schedule rather than on pushes for the same reason.
+# A red run means: pin or cap the offending dependency in Cargo.toml, or raise the MSRV on
+# purpose.
+#
+# Keep the toolchain below in step with `rust-version` in Cargo.toml and the `msrv` job in
+# ci.yml.
+
+on:
+  schedule:
+    - cron: "17 5 * * 1" # Mondays, 05:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  msrv-fresh:
+    name: MSRV (1.88, fresh resolution)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.88.0
+      # No --locked: cargo ignores Cargo.lock and prints "Locking N packages to latest
+      # compatible versions", which is the resolution under test.
+      - name: Install without --locked on the MSRV
+        run: cargo install --path . --root "$RUNNER_TEMP/patchcov"

@@ -87,6 +87,18 @@ RUSTDOCFLAGS='-D warnings' cargo doc --locked --no-deps --document-private-items
 Install the MSRV toolchain with `rustup toolchain install 1.88.0 --profile minimal` if needed.
 CI also runs tests on Linux, macOS, and Windows.
 
+The scheduled [MSRV (fresh resolution)](.github/workflows/msrv-fresh.yml) workflow checks what
+`cargo install patchcov` without `--locked` would build. It runs the unlocked install on the MSRV
+toolchain, so cargo ignores `Cargo.lock` and resolves the newest dependencies. To reproduce it:
+
+```bash
+cargo +1.88.0 install --path . --root "$(mktemp -d)"
+```
+
+It can go red when a transitive dependency raises its MSRV, so it runs weekly and is not a
+required check: do not add it to the ruleset or the list below. Fix a failure by pinning or
+capping the dependency in `Cargo.toml`, or by raising the MSRV on purpose.
+
 `lint-markers` also runs in CI's `Lint` job. This repository's
 [`.patchcov/config.yaml`](.patchcov/config.yaml) limits it to Rust sources, so prose in
 documentation that describes the marker syntax is not flagged.
