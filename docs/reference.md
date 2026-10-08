@@ -137,6 +137,7 @@ message. Warnings printed earlier are JSON lines too, see [Warnings](#warnings) 
 | `kind` | string | The name of the class of failure, from the table below; stable like the code |
 | `message` | string | The outermost error message |
 | `chain` | array of strings | The causes beneath `message`, outermost first; empty when there are none |
+| `gates` | array of objects | Only when `kind` is `gate`: the failed gates as data, described after the table of `kind` values |
 
 `message` and then `chain`, joined with `: `, is the text that follows `Error: ` in the default
 format. A message can contain newlines (a regex parse error does), escaped as usual in JSON.
@@ -159,8 +160,28 @@ usage block. Because parsing had failed, patchcov finds the format by looking fo
 `PATCHCOV_ERROR_FORMAT`. `--help` and `--version` are not failures and print as usual. A bad
 value for `--error-format` itself is a parser error in the default format.
 
-A failed gate is a `gate` object whose `message` names every failed gate, with the threshold and
-the measured value, as in the text; the gates are not separate fields.
+A failed gate is a `gate` object. Its `message` names every failed gate, with the threshold and
+the measured value, as in the text. It also has a `gates` field with the same facts as data, so
+a wrapper can show which gate failed, or compare the measured value with the threshold, without
+parsing the message. `gates` is present only when `kind` is `gate`. It has one entry per failed
+gate, in the order below, and each entry's `gate` names the gate and decides its other fields:
+
+```json
+{"code":1,"kind":"gate","message":"patch coverage 61.11% is below the --fail-under-patch threshold of 80.00%","chain":[],"gates":[{"gate":"fail-under-patch","threshold":80.0,"measured":61.11111111111111}]}
+```
+
+| `gate` | Fields | Meaning |
+|--------|--------|---------|
+| `fail-under-patch` | `threshold`, `measured` (numbers) | Patch coverage `measured` is below `--fail-under-patch` |
+| `fail-under-lines` | `threshold` (number), `measured` (number or `null`) | Overall line coverage `measured` is below `--fail-under-lines`. `measured` is `null` when the report has no executable lines, which fails the gate because nothing can be measured |
+| `fail-on-unmeasured` | `files` (array of strings) | These touched files match `--fail-on-unmeasured` or `diff.require-measured` and are absent from every report |
+
+`threshold` is the value you gave. `measured` is a percentage on a 0 to 100 scale, **not
+rounded** (the `message` rounds it to two decimal places), so `measured < threshold` is the
+comparison the gate made. Round it yourself for display. A gate that passed is not listed.
+
+Consumers should ignore keys they do not know: new fields, and new `gate` values, may be added
+without a change to the exit codes or to the existing fields.
 
 ### Warnings
 

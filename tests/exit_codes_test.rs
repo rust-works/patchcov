@@ -364,11 +364,13 @@ fn assert_json_error(fx: &Fixture, args: &[&str], code: i32, kind: &str) {
     assert_eq!(value["code"], code, "{args:?}: {value}");
     assert_eq!(value["kind"], kind, "{args:?}: {value}");
     let object = value.as_object().unwrap();
-    assert_eq!(
-        object.keys().collect::<Vec<_>>(),
-        ["chain", "code", "kind", "level", "message"],
-        "{args:?}"
-    );
+    // `gates` is for a gate failure only.
+    let expected: &[&str] = if kind == "gate" {
+        &["chain", "code", "gates", "kind", "level", "message"]
+    } else {
+        &["chain", "code", "kind", "level", "message"]
+    };
+    assert_eq!(object.keys().collect::<Vec<_>>(), expected, "{args:?}");
     let chain: Vec<&str> = value["chain"]
         .as_array()
         .unwrap()
@@ -504,6 +506,96 @@ fn a_gate_failure_still_prints_the_report_to_stdout() {
         .as_str()
         .unwrap()
         .contains("--fail-under-patch"));
+}
+
+/// The data behind the message: every failed gate with its threshold and measured
+/// value, so a wrapper does not have to parse the text.
+#[test]
+fn a_json_gate_error_has_the_gates_as_data() {
+    let fx = Fixture::new();
+    let lcov = fx.report();
+    let output = fx.diff(&[
+        "--report",
+        path(&lcov),
+        "--fail-under-patch",
+        "80",
+        "--fail-under-lines",
+        "75.5",
+        "--fail-on-unmeasured",
+        "b.rs",
+        "--error-format",
+        "json",
+    ]);
+    assert_eq!(code(&output), 1, "{}", stderr(&output));
+    let value = report(&output);
+    assert_eq!(
+        value["gates"],
+        serde_json::json!([
+            {"gate": "fail-under-patch", "threshold": 80.0, "measured": 50.0},
+            {"gate": "fail-under-lines", "threshold": 75.5, "measured": 50.0},
+            {"gate": "fail-on-unmeasured", "files": ["b.rs"]},
+        ]),
+        "{value}"
+    );
+    // The message is the same text the default format prints, built from the data.
+    let text = fx.diff(&[
+        "--report",
+        path(&lcov),
+        "--fail-under-patch",
+        "80",
+        "--fail-under-lines",
+        "75.5",
+        "--fail-on-unmeasured",
+        "b.rs",
+    ]);
+    assert_eq!(
+        stderr(&text),
+        format!("Error: {}\n", value["message"].as_str().unwrap())
+    );
+    assert!(value["chain"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn an_unmeasurable_line_total_is_a_null_measured_value() {
+    let fx = Fixture::new();
+    let lcov = fx.report();
+    let output = fx.diff(&[
+        "--report",
+        path(&lcov),
+        "--ignore-filename-regex",
+        r"a\.rs",
+        "--fail-under-lines",
+        "1",
+        "--error-format",
+        "json",
+    ]);
+    assert_eq!(code(&output), 1, "{}", stderr(&output));
+    assert_eq!(
+        report(&output)["gates"],
+        serde_json::json!([{"gate": "fail-under-lines", "threshold": 1.0, "measured": null}])
+    );
+}
+
+#[test]
+fn only_the_gates_that_failed_are_listed() {
+    let fx = Fixture::new();
+    let lcov = fx.report();
+    let output = fx.diff(&[
+        "--report",
+        path(&lcov),
+        "--fail-under-patch",
+        "50",
+        "--fail-under-lines",
+        "60",
+        "--error-format",
+        "json",
+    ]);
+    assert_eq!(code(&output), 1, "{}", stderr(&output));
+    let gates = report(&output)["gates"].clone();
+    assert_eq!(
+        gates,
+        serde_json::json!([{"gate": "fail-under-lines", "threshold": 60.0, "measured": 50.0}])
+    );
 }
 
 #[test]

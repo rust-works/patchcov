@@ -9,7 +9,7 @@ use git2::Repository;
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use regex::RegexSet;
 
-use super::exit::{Classify, ExitKind};
+use super::exit::{gate_error, Classify, ExitKind, GateFailure};
 use super::warn::{warn, WarningKind};
 use crate::analysis::{analyze_with_markers, ExcludedFiles, Markers};
 use crate::config::{load_config_content, resolve_config_dir_at};
@@ -595,36 +595,32 @@ impl DiffCommand {
         println!("{}", outcome.rendered);
         let failures = self.gate_failures(&outcome);
         if !failures.is_empty() {
-            return Err(ExitKind::Gate.error(failures.join("; ")));
+            return Err(gate_error(failures));
         }
         Ok(())
     }
 
-    /// One message per coverage gate `outcome` failed, empty when all pass.
+    /// One entry per coverage gate `outcome` failed, empty when all pass.
     ///
     /// Every failed gate is reported, so fixing one does not just reveal the next.
-    fn gate_failures(&self, outcome: &DiffOutcome) -> Vec<String> {
+    fn gate_failures(&self, outcome: &DiffOutcome) -> Vec<GateFailure> {
         let mut failures = Vec::new();
         if outcome.below_gate {
-            failures.push(format!(
-                "patch coverage {:.2}% is below the --fail-under-patch threshold of {:.2}%",
-                outcome.patch_percent.unwrap_or(0.0),
-                self.fail_under_patch.unwrap_or_default()
-            ));
+            failures.push(GateFailure::FailUnderPatch {
+                threshold: self.fail_under_patch.unwrap_or_default(),
+                measured: outcome.patch_percent.unwrap_or(0.0),
+            });
         }
         if outcome.below_line_gate {
-            let threshold = self.fail_under_lines.unwrap_or_default();
-            failures.push(match outcome.line_percent {
-                Some(pct) => format!(
-                    "line coverage {pct:.2}% is below the --fail-under-lines threshold of {threshold:.2}%"
-                ),
-                None => format!(
-                    "the report has no executable lines, so the --fail-under-lines threshold of {threshold:.2}% cannot be met"
-                ),
+            failures.push(GateFailure::FailUnderLines {
+                threshold: self.fail_under_lines.unwrap_or_default(),
+                measured: outcome.line_percent,
             });
         }
         if !outcome.unmeasured_failures.is_empty() {
-            failures.push(format!("touched files absent from every coverage report (--fail-on-unmeasured / diff.require-measured): {}", outcome.unmeasured_failures.join(", ")));
+            failures.push(GateFailure::FailOnUnmeasured {
+                files: outcome.unmeasured_failures.clone(),
+            });
         }
         failures
     }
@@ -1103,7 +1099,12 @@ mod tests {
         cmd.fail_on_unmeasured.push("**/*.rs".into());
         let outcome = cmd.run(Some(&repo)).unwrap();
         assert_eq!(outcome.unmeasured_failures, ["b.rs"]);
-        assert!(cmd.gate_failures(&outcome)[0].contains("b.rs"));
+        assert_eq!(
+            cmd.gate_failures(&outcome),
+            [GateFailure::FailOnUnmeasured {
+                files: vec!["b.rs".into()]
+            }]
+        );
         assert!(cmd.execute(Some(&repo)).is_err());
     }
 
@@ -1615,8 +1616,14 @@ mod tests {
         assert_eq!(outcome.line_percent, None);
         assert!(outcome.below_line_gate);
         let failures = cmd.gate_failures(&outcome);
-        assert_eq!(failures.len(), 1);
-        assert!(failures[0].contains("no executable lines"), "{failures:?}");
+        assert_eq!(
+            failures,
+            [GateFailure::FailUnderLines {
+                threshold: 1.0,
+                measured: None
+            }]
+        );
+        assert!(failures[0].to_string().contains("no executable lines"));
     }
 
     #[test]
@@ -1631,11 +1638,28 @@ mod tests {
         let failures = cmd.gate_failures(&outcome);
         assert_eq!(failures.len(), 2, "{failures:?}");
         assert!(
-            failures[0].contains("patch coverage 66.67%"),
+            matches!(
+                failures[0],
+                GateFailure::FailUnderPatch { threshold, measured }
+                    if (threshold - 90.0).abs() < 1e-9 && (measured - 200.0 / 3.0).abs() < 1e-9
+            ),
             "{failures:?}"
         );
-        assert!(failures[1].contains("line coverage 40.00%"), "{failures:?}");
-        assert!(failures[1].contains("--fail-under-lines threshold of 90.00%"));
+        assert_eq!(
+            failures[1],
+            GateFailure::FailUnderLines {
+                threshold: 90.0,
+                measured: Some(40.0)
+            }
+        );
+        // The message is rendered from the data and joins every failure.
+        let message = gate_error(failures).to_string();
+        assert!(
+            message.contains("patch coverage 66.67% is below"),
+            "{message}"
+        );
+        assert!(message.contains("; line coverage 40.00%"), "{message}");
+        assert!(message.contains("--fail-under-lines threshold of 90.00%"));
     }
 
     #[test]
