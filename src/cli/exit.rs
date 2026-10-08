@@ -122,11 +122,16 @@ pub fn code(err: &anyhow::Error) -> u8 {
     kind(err).code()
 }
 
+/// The `level` of an [`ErrorReport`].
+const LEVEL: &str = "error";
+
 /// A failure as one machine-readable object, printed to stderr by
 /// `--error-format json`. The fields are part of the command-line contract and
 /// documented in `docs/reference.md#error-output`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ErrorReport {
+    /// Always `"error"`, so a consumer can tell this object from a warning line.
+    pub level: &'static str,
     /// The process exit code.
     pub code: u8,
     /// The stable name of the class of failure, see [`ExitKind::name`].
@@ -144,6 +149,7 @@ impl ErrorReport {
         let kind = kind(err);
         let mut messages = err.chain().map(ToString::to_string);
         Self {
+            level: LEVEL,
             code: kind.code(),
             kind: kind.name(),
             message: messages.next().unwrap_or_default(),
@@ -154,6 +160,7 @@ impl ErrorReport {
     /// The report for an error the argument parser found, which has no chain.
     pub fn usage(message: impl Into<String>) -> Self {
         Self {
+            level: LEVEL,
             code: ExitKind::Usage.code(),
             kind: ExitKind::Usage.name(),
             message: message.into(),
@@ -288,7 +295,7 @@ mod tests {
         assert!(!json.contains('\n'), "{json}");
         assert_eq!(
             json,
-            r#"{"code":1,"kind":"gate","message":"it said \"no\"\nreally","chain":[]}"#
+            r#"{"level":"error","code":1,"kind":"gate","message":"it said \"no\"\nreally","chain":[]}"#
         );
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["message"], "it said \"no\"\nreally");

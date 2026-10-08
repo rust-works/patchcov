@@ -9,6 +9,7 @@ use git2::Repository;
 
 use super::diff::{anchor, read_report, ReportFormat};
 use super::exit::{Classify, ExitKind};
+use super::warn::{warn, WarningKind};
 use crate::merge::check_shard;
 use crate::render::pct;
 use crate::{lcov, CoverageReport};
@@ -100,7 +101,7 @@ impl MergeCommand {
     pub fn execute(self, repo: Option<&Path>) -> Result<()> {
         let outcome = self.run(repo)?;
         for warning in &outcome.warnings {
-            eprintln!("warning: {warning}");
+            warn(WarningKind::ShardRoot, warning);
         }
         eprintln!(
             "merged {} report(s) into {}: {} file(s), {} of {} lines covered ({})",

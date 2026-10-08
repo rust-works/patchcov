@@ -10,6 +10,7 @@ use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use regex::RegexSet;
 
 use super::exit::{Classify, ExitKind};
+use super::warn::{warn, WarningKind};
 use crate::analysis::{analyze_with_markers, ExcludedFiles, Markers};
 use crate::config::{load_config_content, resolve_config_dir_at};
 use crate::format::resolve as resolve_format;
@@ -575,17 +576,21 @@ impl DiffCommand {
     /// (`None` = current working directory).
     pub fn execute(mut self, repo: Option<&Path>) -> Result<()> {
         if let Some(format) = self.format.take() {
-            eprintln!("warning: --format is deprecated; use -o/--output instead");
+            warn(
+                WarningKind::Deprecated,
+                "--format is deprecated; use -o/--output instead",
+            );
             self.output = format;
         }
         if self.fail_on_path_mismatch {
-            eprintln!(
-                "warning: --fail-on-path-mismatch is deprecated and has no effect; a path mismatch is an error unless --allow-path-mismatch or diff.allow-path-mismatch is set"
+            warn(
+                WarningKind::Deprecated,
+                "--fail-on-path-mismatch is deprecated and has no effect; a path mismatch is an error unless --allow-path-mismatch or diff.allow-path-mismatch is set",
             );
         }
         let outcome = self.run(repo)?;
         for warning in &outcome.warnings {
-            eprintln!("warning: {warning}");
+            warn(WarningKind::PathMismatch, warning);
         }
         println!("{}", outcome.rendered);
         let failures = self.gate_failures(&outcome);
