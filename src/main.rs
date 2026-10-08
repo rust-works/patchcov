@@ -1,15 +1,37 @@
 //! The `patchcov` command-line entry point.
 
+use std::ffi::OsString;
 use std::process::ExitCode;
 
 use clap::Parser;
+use patchcov::cli::exit::{self, ErrorReport};
+use patchcov::cli::{usage_report, Cli, ErrorFormat, ERROR_FORMAT_ENV};
 
 fn main() -> ExitCode {
-    match patchcov::cli::Cli::parse().execute() {
+    let args: Vec<OsString> = std::env::args_os().collect();
+    let cli = match Cli::try_parse_from(&args) {
+        Ok(cli) => cli,
+        Err(err) => {
+            let env = std::env::var_os(ERROR_FORMAT_ENV);
+            return match usage_report(&err, &args, env.as_ref()) {
+                Some(report) => {
+                    eprintln!("{}", report.to_json());
+                    ExitCode::from(report.code)
+                }
+                // Prints the message (or help) and exits with clap's own code.
+                None => err.exit(),
+            };
+        }
+    };
+    let error_format = cli.error_format;
+    match cli.execute() {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
-            eprintln!("Error: {err:#}");
-            ExitCode::from(patchcov::cli::exit::code(&err))
+            match error_format {
+                ErrorFormat::Text => eprintln!("Error: {err:#}"),
+                ErrorFormat::Json => eprintln!("{}", ErrorReport::new(&err).to_json()),
+            }
+            ExitCode::from(exit::code(&err))
         }
     }
 }

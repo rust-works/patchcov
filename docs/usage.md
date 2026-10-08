@@ -401,7 +401,9 @@ and `ignore` markers, exactly as the patch gate does. Both gates can be set toge
 every gate that fails is named in the error. The report is still printed to stdout when a
 gate fails, so a CI job can post the comment and then fail. A failed gate exits `1`;
 other failures have their own codes, so a script can tell them apart. All exit codes are
-in the [reference](reference.md#exit-codes).
+in the [reference](reference.md#exit-codes). `--error-format json` prints the cause as a JSON
+object on stderr, for a wrapper that wants it without parsing text; see
+[error output](reference.md#error-output).
 
 - **The figure is per-line, not llvm-cov's summary.** It is covered lines over the
   distinct executable lines in the report's per-line records (an lcov's `DA:` records, or

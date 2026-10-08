@@ -3,10 +3,13 @@
 //! A command fails with an [`anyhow::Error`]. The CLI layer tags the failures it
 //! can tell apart with an [`ExitKind`] (see [`Classify`]), and `main` turns the tag
 //! into the process exit code with [`code`]. The tag is invisible in the message,
-//! so what is printed to stderr does not depend on it.
+//! so what is printed to stderr does not depend on it by default. With
+//! `--error-format json` the same tag is printed as an [`ErrorReport`].
 
 use std::error::Error as StdError;
 use std::fmt;
+
+use serde::Serialize;
 
 /// A class of failure, and the exit code it ends the process with.
 ///
@@ -41,6 +44,21 @@ impl ExitKind {
     /// The process exit code for this class of failure.
     pub const fn code(self) -> u8 {
         self as u8
+    }
+
+    /// The stable name of this class in the JSON error report, listed in
+    /// `docs/reference.md#error-output`.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Gate => "gate",
+            Self::Usage => "usage",
+            Self::Report => "report",
+            Self::Marker => "marker",
+            Self::Config => "config",
+            Self::Git => "git",
+            Self::PathMismatch => "path-mismatch",
+            Self::Other => "other",
+        }
     }
 
     /// A new error with this class and `message`, for a check that fails outright.
@@ -94,9 +112,60 @@ fn kind_of(err: &anyhow::Error) -> Option<ExitKind> {
         .map(ExitError::kind)
 }
 
+/// The class of `err`: its tag, or [`ExitKind::Other`] when it has none.
+pub fn kind(err: &anyhow::Error) -> ExitKind {
+    kind_of(err).unwrap_or(ExitKind::Other)
+}
+
 /// The exit code for `err`: its tag, or [`ExitKind::Other`] when it has none.
 pub fn code(err: &anyhow::Error) -> u8 {
-    kind_of(err).unwrap_or(ExitKind::Other).code()
+    kind(err).code()
+}
+
+/// A failure as one machine-readable object, printed to stderr by
+/// `--error-format json`. The fields are part of the command-line contract and
+/// documented in `docs/reference.md#error-output`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ErrorReport {
+    /// The process exit code.
+    pub code: u8,
+    /// The stable name of the class of failure, see [`ExitKind::name`].
+    pub kind: &'static str,
+    /// The outermost error message.
+    pub message: String,
+    /// The causes beneath `message`, outermost first. `message` followed by
+    /// these, joined with `: `, is the text after `Error: ` in the default format.
+    pub chain: Vec<String>,
+}
+
+impl ErrorReport {
+    /// The report for `err`.
+    pub fn new(err: &anyhow::Error) -> Self {
+        let kind = kind(err);
+        let mut messages = err.chain().map(ToString::to_string);
+        Self {
+            code: kind.code(),
+            kind: kind.name(),
+            message: messages.next().unwrap_or_default(),
+            chain: messages.collect(),
+        }
+    }
+
+    /// The report for an error the argument parser found, which has no chain.
+    pub fn usage(message: impl Into<String>) -> Self {
+        Self {
+            code: ExitKind::Usage.code(),
+            kind: ExitKind::Usage.name(),
+            message: message.into(),
+            chain: Vec::new(),
+        }
+    }
+
+    /// The report as a single line of JSON.
+    pub fn to_json(&self) -> String {
+        // Plain strings and numbers always serialize.
+        serde_json::to_string(self).unwrap_or_default()
+    }
 }
 
 /// Tags a failure with its [`ExitKind`].
@@ -157,6 +226,72 @@ mod tests {
             assert_eq!(kind.code(), number, "{kind:?}");
             assert_eq!(code(&fail(kind)), number, "{kind:?}");
         }
+    }
+
+    /// The names are a contract with scripts; this is the table in the docs.
+    #[test]
+    fn names_are_stable() {
+        let expected = [
+            (ExitKind::Gate, "gate"),
+            (ExitKind::Usage, "usage"),
+            (ExitKind::Report, "report"),
+            (ExitKind::Marker, "marker"),
+            (ExitKind::Config, "config"),
+            (ExitKind::Git, "git"),
+            (ExitKind::PathMismatch, "path-mismatch"),
+            (ExitKind::Other, "other"),
+        ];
+        for (kind, name) in expected {
+            assert_eq!(kind.name(), name, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn a_report_names_the_class_message_and_causes() {
+        let err = Err::<(), _>(std::io::Error::other("disk on fire"))
+            .context("could not read it")
+            .classify(ExitKind::Report)
+            .unwrap_err();
+        let err = Err::<(), _>(err).context("outer").unwrap_err();
+        let report = ErrorReport::new(&err);
+        assert_eq!(report.code, 3);
+        assert_eq!(report.kind, "report");
+        assert_eq!(report.message, "outer");
+        assert_eq!(report.chain, ["could not read it", "disk on fire"]);
+        // The text format is the same messages joined.
+        let mut all = vec![report.message.clone()];
+        all.extend(report.chain);
+        assert_eq!(all.join(": "), format!("{err:#}"));
+    }
+
+    #[test]
+    fn a_report_of_an_untagged_error_is_other_with_no_chain() {
+        let report = ErrorReport::new(&anyhow!("boom"));
+        assert_eq!(report.code, 8);
+        assert_eq!(report.kind, "other");
+        assert_eq!(report.message, "boom");
+        assert!(report.chain.is_empty());
+    }
+
+    #[test]
+    fn a_usage_report_has_no_chain() {
+        let report = ErrorReport::usage("bad flag");
+        assert_eq!((report.code, report.kind), (2, "usage"));
+        assert!(report.chain.is_empty());
+    }
+
+    /// One line, fields in the documented order, quotes and newlines escaped.
+    #[test]
+    fn json_is_one_line_in_field_order() {
+        let err = ExitKind::Gate.error("it said \"no\"\nreally");
+        let json = ErrorReport::new(&err).to_json();
+        assert!(!json.contains('\n'), "{json}");
+        assert_eq!(
+            json,
+            r#"{"code":1,"kind":"gate","message":"it said \"no\"\nreally","chain":[]}"#
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["message"], "it said \"no\"\nreally");
     }
 
     #[test]
