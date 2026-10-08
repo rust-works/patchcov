@@ -9,9 +9,7 @@
 use std::error::Error as StdError;
 use std::fmt;
 
-use serde::{Serialize, Serializer};
-
-use crate::render::round2;
+use serde::Serialize;
 
 /// A class of failure, and the exit code it ends the process with.
 ///
@@ -143,8 +141,9 @@ const LEVEL: &str = "error";
 ///
 /// The [`Display`](fmt::Display) form is the message printed in the default
 /// error format; the serialized form is an element of `gates` in the JSON error
-/// report, documented in `docs/reference.md#error-output`. Percentages are
-/// serialized rounded to two decimal places, like the `-o json` output.
+/// report, documented in `docs/reference.md#error-output`. The measured values
+/// are not rounded, so comparing one with its threshold gives the answer the
+/// gate gave; only the message rounds them, to two decimal places.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "gate", rename_all = "kebab-case")]
 pub enum GateFailure {
@@ -153,7 +152,6 @@ pub enum GateFailure {
         /// The `--fail-under-patch` threshold.
         threshold: f64,
         /// The measured patch coverage.
-        #[serde(serialize_with = "rounded")]
         measured: f64,
     },
     /// `--fail-under-lines`: overall line coverage is below the threshold, or
@@ -163,7 +161,6 @@ pub enum GateFailure {
         threshold: f64,
         /// The measured line coverage; `None` (`null`) when no executable line
         /// is left to measure.
-        #[serde(serialize_with = "rounded_option")]
         measured: Option<f64>,
     },
     /// `--fail-on-unmeasured` / `diff.require-measured`: touched files that match
@@ -172,16 +169,6 @@ pub enum GateFailure {
         /// The matching touched files, in path order.
         files: Vec<String>,
     },
-}
-
-// serde's `serialize_with` passes the field by reference.
-#[allow(clippy::trivially_copy_pass_by_ref)]
-fn rounded<S: Serializer>(value: &f64, serializer: S) -> Result<S::Ok, S::Error> {
-    round2(*value).serialize(serializer)
-}
-
-fn rounded_option<S: Serializer>(value: &Option<f64>, serializer: S) -> Result<S::Ok, S::Error> {
-    value.map(round2).serialize(serializer)
 }
 
 impl fmt::Display for GateFailure {
@@ -222,6 +209,7 @@ impl fmt::Display for GateFailure {
 /// The message names every failed gate, joined by `; `. The failures stay on the
 /// error, for the `gates` field of the JSON report.
 pub fn gate_error(failures: Vec<GateFailure>) -> anyhow::Error {
+    debug_assert!(!failures.is_empty(), "a gate error names a failed gate");
     let message = failures
         .iter()
         .map(ToString::to_string)
@@ -427,7 +415,7 @@ mod tests {
         vec![
             GateFailure::FailUnderPatch {
                 threshold: 80.0,
-                measured: 200.0 / 3.0,
+                measured: 66.5,
             },
             GateFailure::FailUnderLines {
                 threshold: 90.0,
@@ -450,7 +438,7 @@ mod tests {
         assert_eq!(
             messages,
             [
-                "patch coverage 66.67% is below the --fail-under-patch threshold of 80.00%",
+                "patch coverage 66.50% is below the --fail-under-patch threshold of 80.00%",
                 "line coverage 40.00% is below the --fail-under-lines threshold of 90.00%",
                 "the report has no executable lines, so the --fail-under-lines threshold of 50.00% cannot be met",
                 "touched files absent from every coverage report (--fail-on-unmeasured / diff.require-measured): a.rs, b.rs",
@@ -464,11 +452,11 @@ mod tests {
         assert_eq!(code(&err), 1);
         let text = format!("{err:#}");
         assert_eq!(text.matches("; ").count(), 3, "{text}");
-        assert!(text.starts_with("patch coverage 66.67%"), "{text}");
+        assert!(text.starts_with("patch coverage 66.50%"), "{text}");
         assert_eq!(tag_of(&err).unwrap().gates(), failures());
     }
 
-    /// Fields in the documented order; percentages rounded, thresholds as given.
+    /// Fields in the documented order; the numbers are exactly as measured.
     #[test]
     fn a_gate_report_lists_the_gates() {
         let report = ErrorReport::new(&gate_error(failures()));
@@ -476,7 +464,7 @@ mod tests {
         assert_eq!(
             json["gates"],
             serde_json::json!([
-                {"gate": "fail-under-patch", "threshold": 80.0, "measured": 66.67},
+                {"gate": "fail-under-patch", "threshold": 80.0, "measured": 66.5},
                 {"gate": "fail-under-lines", "threshold": 90.0, "measured": 40.0},
                 {"gate": "fail-under-lines", "threshold": 50.0, "measured": null},
                 {"gate": "fail-on-unmeasured", "files": ["a.rs", "b.rs"]},
@@ -485,11 +473,25 @@ mod tests {
         let line = report.to_json();
         assert!(
             line.contains(
-                r#""gates":[{"gate":"fail-under-patch","threshold":80.0,"measured":66.67}"#
+                r#""gates":[{"gate":"fail-under-patch","threshold":80.0,"measured":66.5}"#
             ),
             "{line}"
         );
         assert!(!line.contains('\n'), "{line}");
+    }
+
+    /// A value just under the threshold must not round up to it, or comparing the
+    /// two would say the gate passed.
+    #[test]
+    fn measured_values_are_not_rounded() {
+        let err = gate_error(vec![GateFailure::FailUnderPatch {
+            threshold: 80.0,
+            measured: 79.996,
+        }]);
+        let json: serde_json::Value =
+            serde_json::from_str(&ErrorReport::new(&err).to_json()).unwrap();
+        assert_eq!(json["gates"][0]["measured"], 79.996);
+        assert!(err.to_string().contains("80.00% is below"), "{err}");
     }
 
     /// `gates` is for a gate that carries data and nothing else.

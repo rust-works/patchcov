@@ -167,7 +167,7 @@ parsing the message. `gates` is present only when `kind` is `gate`. It has one e
 gate, in the order below, and each entry's `gate` names the gate and decides its other fields:
 
 ```json
-{"code":1,"kind":"gate","message":"patch coverage 61.11% is below the --fail-under-patch threshold of 80.00%","chain":[],"gates":[{"gate":"fail-under-patch","threshold":80.0,"measured":61.11}]}
+{"code":1,"kind":"gate","message":"patch coverage 61.11% is below the --fail-under-patch threshold of 80.00%","chain":[],"gates":[{"gate":"fail-under-patch","threshold":80.0,"measured":61.11111111111111}]}
 ```
 
 | `gate` | Fields | Meaning |
@@ -176,8 +176,9 @@ gate, in the order below, and each entry's `gate` names the gate and decides its
 | `fail-under-lines` | `threshold` (number), `measured` (number or `null`) | Overall line coverage `measured` is below `--fail-under-lines`. `measured` is `null` when the report has no executable lines, which fails the gate because nothing can be measured |
 | `fail-on-unmeasured` | `files` (array of strings) | These touched files match `--fail-on-unmeasured` or `diff.require-measured` and are absent from every report |
 
-`threshold` is the value you gave. `measured` is a percentage on a 0 to 100 scale, rounded to two
-decimal places, like the [output schema](#output-schema). A gate that passed is not listed.
+`threshold` is the value you gave. `measured` is a percentage on a 0 to 100 scale, **not
+rounded** (the `message` rounds it to two decimal places), so `measured < threshold` is the
+comparison the gate made. Round it yourself for display. A gate that passed is not listed.
 
 Consumers should ignore keys they do not know: new fields, and new `gate` values, may be added
 without a change to the exit codes or to the existing fields.

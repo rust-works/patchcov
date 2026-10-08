@@ -94,7 +94,7 @@ pub fn render(diff: &CoverageDiff, opts: &RenderOptions, format: OutputFormat) -
 // ---------------------------------------------------------------------------
 
 /// Rounds to two decimal places, normalising negative zero to `0.0`.
-pub(crate) fn round2(x: f64) -> f64 {
+fn round2(x: f64) -> f64 {
     let r = (x * 100.0).round() / 100.0;
     if r == 0.0 {
         0.0
