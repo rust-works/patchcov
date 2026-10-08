@@ -197,6 +197,7 @@ fn tracked_paths(repo: &Repository) -> Result<Vec<PathBuf>> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::cli::doc_fields::{example_keys, json_keys, reference_section, table_fields};
 
     /// The object keeps the documented fields in order, and splits the text a
     /// finding prints in the default format into `path`, `line` and `message`.
@@ -212,6 +213,26 @@ mod tests {
             r#"{"level":"error","kind":"marker-finding","path":"src/a:b.rs","line":12,"message":"needs a \"reason\""}"#
         );
         assert_eq!(error.to_string(), "src/a:b.rs:12: needs a \"reason\"");
+    }
+
+    /// The fields, and their order, are what `docs/reference.md` says: the table
+    /// and the example line both.
+    #[test]
+    fn a_finding_has_the_fields_the_docs_list() {
+        let error = markers::MarkerError {
+            path: "src/a.rs".to_string(),
+            line: 1,
+            message: "m".to_string(),
+        };
+        let keys = json_keys(&serde_json::to_string(&Finding::new(&error)).unwrap());
+        assert_eq!(keys, ["level", "kind", "path", "line", "message"]);
+        let section = reference_section("Findings and summary");
+        assert_eq!(table_fields(section, FINDING_KIND), keys, "the docs table");
+        assert_eq!(
+            example_keys(section, FINDING_KIND),
+            Some(keys),
+            "the docs example"
+        );
     }
 
     fn globs(patterns: &[&str]) -> GlobSet {

@@ -243,6 +243,9 @@ fn render(format: ErrorFormat, warning: &Warning) -> String {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::cli::doc_fields::{
+        example_keys, first_table_fields, json_keys, kind_rows, reference_section,
+    };
 
     fn path_mismatch() -> Warning {
         Warning::PathMismatch {
@@ -415,5 +418,47 @@ mod tests {
                 assert_eq!(&object[key], value, "{key}");
             }
         }
+    }
+
+    /// Every kind has the fields the "Warnings" tables in `docs/reference.md` list,
+    /// in that order, and the docs list no kind the code does not have.
+    #[test]
+    fn each_kind_matches_the_docs() {
+        let section = reference_section("Warnings");
+        let common = ["level", "kind", "message"];
+        assert_eq!(first_table_fields(section), common);
+
+        let warnings = [
+            Warning::deprecated(DeprecatedFlag::Format),
+            Warning::deprecated(DeprecatedFlag::FailOnPathMismatch),
+            path_mismatch(),
+            shard_root(),
+            glob_no_match(GlobOrigin::IncludeFlag),
+            glob_no_match(GlobOrigin::ConfigInclude),
+        ];
+        let documented = kind_rows(section);
+        let mut kinds: Vec<_> = warnings.iter().map(Warning::kind).collect();
+        kinds.dedup();
+        let listed: Vec<_> = documented.iter().map(|(kind, _)| kind.as_str()).collect();
+        assert_eq!(listed, kinds, "the kinds in the docs table");
+
+        let mut examples = 0;
+        for warning in &warnings {
+            let kind = warning.kind();
+            let keys = json_keys(&render(ErrorFormat::Json, warning));
+            let fields = &documented.iter().find(|(k, _)| k == kind).unwrap().1;
+            let want: Vec<_> = common
+                .iter()
+                .map(ToString::to_string)
+                .chain(fields.iter().cloned())
+                .collect();
+            assert_eq!(keys, want, "{kind}: the docs table");
+            // The docs show an example for some kinds only.
+            if let Some(example) = example_keys(section, kind) {
+                examples += 1;
+                assert_eq!(example, want, "{kind}: the docs example");
+            }
+        }
+        assert!(examples > 0, "the docs show no example warning line");
     }
 }
