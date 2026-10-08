@@ -1637,15 +1637,14 @@ mod tests {
         let outcome = cmd.run(Some(&repo)).unwrap();
         let failures = cmd.gate_failures(&outcome);
         assert_eq!(failures.len(), 2, "{failures:?}");
-        let GateFailure::FailUnderPatch {
-            threshold,
-            measured,
-        } = failures[0]
-        else {
-            panic!("{failures:?}");
-        };
-        assert_eq!(threshold, 90.0);
-        assert!((measured - 200.0 / 3.0).abs() < 1e-9, "{measured}");
+        assert!(
+            matches!(
+                failures[0],
+                GateFailure::FailUnderPatch { threshold, measured }
+                    if (threshold - 90.0).abs() < 1e-9 && (measured - 200.0 / 3.0).abs() < 1e-9
+            ),
+            "{failures:?}"
+        );
         assert_eq!(
             failures[1],
             GateFailure::FailUnderLines {
