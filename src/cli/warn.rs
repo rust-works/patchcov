@@ -106,7 +106,8 @@ pub enum Warning {
     /// run continue.
     PathMismatch {
         /// The coverage report, as the message names it: a display string, with
-        /// U+FFFD for any byte of a non-UTF-8 path, not a path identifier.
+        /// U+FFFD for each invalid byte sequence of a non-UTF-8 path, not a path
+        /// identifier.
         report: String,
         /// How many file paths the report has.
         file_count: usize,
