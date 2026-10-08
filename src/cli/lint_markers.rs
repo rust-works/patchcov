@@ -122,7 +122,12 @@ impl LintMarkersCommand {
             };
             let display = path.display().to_string();
             if let Err(error) = markers::scan(&display, &source) {
-                emit(error.to_string(), &Finding::new(&error));
+                emit(
+                    FINDING_LEVEL,
+                    FINDING_KIND,
+                    error.to_string(),
+                    &Finding::new(&error),
+                );
                 failed = true;
             }
         }

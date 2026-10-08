@@ -11,6 +11,8 @@ use std::fmt;
 
 use serde::Serialize;
 
+use super::warn::json_line;
+
 /// A class of failure, and the exit code it ends the process with.
 ///
 /// `2` is also what the argument parser exits with, so it is the code of every
@@ -276,8 +278,7 @@ impl ErrorReport {
 
     /// The report as a single line of JSON.
     pub fn to_json(&self) -> String {
-        // Plain strings and numbers always serialize.
-        serde_json::to_string(self).unwrap_or_default()
+        json_line(self, self.level, self.kind, &self.message)
     }
 }
 
