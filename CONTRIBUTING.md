@@ -76,11 +76,11 @@ Run the same checks as CI from your checkout:
 
 ```bash
 cargo fmt --check
-cargo test --all-targets
-cargo clippy --all-targets -- -D warnings
+cargo test --locked --all-targets
+cargo clippy --locked --all-targets -- -D warnings
 cargo run --locked -- lint-markers
-cargo +1.88.0 check --all-targets
-RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --document-private-items
+cargo +1.88.0 check --locked --all-targets
+RUSTDOCFLAGS='-D warnings' cargo doc --locked --no-deps --document-private-items
 ```
 
 Install the MSRV toolchain with `rustup toolchain install 1.88.0 --profile minimal` if needed.
