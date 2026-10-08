@@ -46,6 +46,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.88.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --locked --all-targets
+      - run: cargo test --locked --doc
 
   docs:
     name: Docs
