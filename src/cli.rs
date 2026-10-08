@@ -5,19 +5,19 @@ pub mod exit;
 pub(crate) mod lint_markers;
 pub(crate) mod merge;
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 use self::exit::ErrorReport;
 
-/// Environment variable that sets `--error-format`.
+/// Environment variable that sets `--error-format`, when the flag is absent.
 pub const ERROR_FORMAT_ENV: &str = "PATCHCOV_ERROR_FORMAT";
 
 /// How a failure is printed to stderr.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
 pub enum ErrorFormat {
     /// `Error: <message>: <cause>...` on one line.
     #[default]
@@ -41,15 +41,16 @@ pub struct Cli {
 
     /// How a failure is printed to stderr: `text` (an `Error:` line) or `json`
     /// (one machine-readable object).
+    ///
+    /// Without the flag, `PATCHCOV_ERROR_FORMAT` is used; see
+    /// [`Cli::resolve_error_format`].
     #[arg(
         long = "error-format",
         global = true,
-        value_name = "text|json",
-        value_parser = parse_error_format,
-        env = ERROR_FORMAT_ENV,
-        default_value = "text"
+        value_enum,
+        value_name = "FORMAT"
     )]
-    pub error_format: ErrorFormat,
+    pub error_format: Option<ErrorFormat>,
 }
 
 /// Subcommands.
@@ -64,6 +65,32 @@ pub enum Commands {
 }
 
 impl Cli {
+    /// The format failures are printed in: the flag, else `env` (the value of
+    /// [`ERROR_FORMAT_ENV`]), else text.
+    ///
+    /// An empty variable counts as unset. One that is neither `text` nor `json` is
+    /// ignored with the returned warning rather than failing every command over a
+    /// purely diagnostic setting.
+    pub fn resolve_error_format(&self, env: Option<&OsStr>) -> (ErrorFormat, Option<String>) {
+        if let Some(format) = self.error_format {
+            return (format, None);
+        }
+        let Some(env) = env else {
+            return (ErrorFormat::Text, None);
+        };
+        match env.to_str() {
+            Some("" | "text") => (ErrorFormat::Text, None),
+            Some("json") => (ErrorFormat::Json, None),
+            _ => (
+                ErrorFormat::Text,
+                Some(format!(
+                    "ignoring {ERROR_FORMAT_ENV}={}: expected 'text' or 'json'",
+                    env.to_string_lossy()
+                )),
+            ),
+        }
+    }
+
     /// Executes the command.
     ///
     /// `-C/--repo` is resolved here (`None` = current working directory) and
@@ -75,16 +102,6 @@ impl Cli {
             Commands::LintMarkers(cmd) => cmd.execute(repo),
             Commands::Merge(cmd) => cmd.execute(repo),
         }
-    }
-}
-
-/// Parses `--error-format`. An empty value is the default, so an empty
-/// [`ERROR_FORMAT_ENV`] counts as unset, like the other environment variables.
-fn parse_error_format(value: &str) -> Result<ErrorFormat, String> {
-    match value {
-        "" | "text" => Ok(ErrorFormat::Text),
-        "json" => Ok(ErrorFormat::Json),
-        _ => Err("expected 'text' or 'json'".to_string()),
     }
 }
 
@@ -102,10 +119,17 @@ pub fn usage_report(
     if !err.use_stderr() || !json_requested(args, env) {
         return None;
     }
+    // The error and its tips, without the usage block and the pointer to `--help`.
     let rendered = err.render().to_string();
-    let first = rendered.split("\n\n").next().unwrap_or_default();
-    let message = first.strip_prefix("error: ").unwrap_or(first);
-    Some(ErrorReport::usage(message.trim()))
+    let end = ["\n\nUsage:", "\n\nFor more information"]
+        .iter()
+        .filter_map(|trailer| rendered.find(trailer))
+        .min()
+        .unwrap_or(rendered.len());
+    let message = rendered[..end].trim();
+    Some(ErrorReport::usage(
+        message.strip_prefix("error: ").unwrap_or(message),
+    ))
 }
 
 /// Whether `args` (or, without a flag, `env`) ask for `--error-format json`.
@@ -164,7 +188,7 @@ mod tests {
                 commit_url: None,
             })),
             repo: None,
-            error_format: ErrorFormat::Text,
+            error_format: None,
         };
         // Reaches the leaf command and fails on the missing report file.
         assert!(cmd.execute().is_err());
@@ -184,7 +208,7 @@ mod tests {
                 strip_prefix: None,
             }),
             repo: None,
-            error_format: ErrorFormat::Text,
+            error_format: None,
         };
         assert!(cmd.execute().is_err());
         assert!(!output.exists());
@@ -197,13 +221,56 @@ mod tests {
             .collect()
     }
 
+    fn cli_with(error_format: Option<ErrorFormat>) -> Cli {
+        Cli {
+            command: Commands::Merge(merge::MergeCommand {
+                report: Vec::new(),
+                report_format: diff::ReportFormat::Auto,
+                output: PathBuf::from("out.lcov"),
+                strip_prefix: None,
+            }),
+            repo: None,
+            error_format,
+        }
+    }
+
     #[test]
-    fn error_formats_parse() {
-        assert_eq!(parse_error_format("text"), Ok(ErrorFormat::Text));
-        assert_eq!(parse_error_format("json"), Ok(ErrorFormat::Json));
-        assert_eq!(parse_error_format(""), Ok(ErrorFormat::Text));
-        assert!(parse_error_format("JSON").is_err());
-        assert_eq!(ErrorFormat::default(), ErrorFormat::Text);
+    fn the_flag_wins_over_the_environment_and_text_is_the_default() {
+        let env = |value: &'static str| Some(OsStr::new(value));
+        let resolve = |flag, value| cli_with(flag).resolve_error_format(value);
+        assert_eq!(resolve(None, None), (ErrorFormat::Text, None));
+        assert_eq!(resolve(None, env("json")), (ErrorFormat::Json, None));
+        assert_eq!(resolve(None, env("text")), (ErrorFormat::Text, None));
+        assert_eq!(resolve(None, env("")), (ErrorFormat::Text, None));
+        let flag = Some(ErrorFormat::Text);
+        assert_eq!(resolve(flag, env("json")), (ErrorFormat::Text, None));
+        let flag = Some(ErrorFormat::Json);
+        assert_eq!(resolve(flag, env("text")), (ErrorFormat::Json, None));
+        // A bad variable is ignored with a warning, unless the flag makes it moot.
+        let (format, warning) = resolve(None, env("xml"));
+        assert_eq!(format, ErrorFormat::Text);
+        assert!(warning.unwrap().contains("PATCHCOV_ERROR_FORMAT=xml"));
+        assert_eq!(resolve(flag, env("xml")), (ErrorFormat::Json, None));
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let (format, warning) = resolve(None, Some(OsStr::from_bytes(b"\xff")));
+            assert_eq!(format, ErrorFormat::Text);
+            assert!(warning.is_some());
+        }
+    }
+
+    #[test]
+    fn the_flag_parses_before_or_after_the_subcommand() {
+        for argv in [
+            ["--error-format", "json", "lint-markers"],
+            ["lint-markers", "--error-format", "json"],
+        ] {
+            let cli = Cli::try_parse_from(std::iter::once("patchcov").chain(argv)).unwrap();
+            assert_eq!(cli.error_format, Some(ErrorFormat::Json));
+        }
+        let cli = Cli::try_parse_from(["patchcov", "lint-markers"]).unwrap();
+        assert_eq!(cli.error_format, None);
     }
 
     #[test]
@@ -248,6 +315,22 @@ mod tests {
         assert!(report.chain.is_empty());
         // Not asked for: clap prints it.
         assert!(usage_report(&err, &args(&["diff"]), None).is_none());
+    }
+
+    /// clap's tips are part of the message; its usage block is not.
+    #[test]
+    fn a_parse_failure_keeps_clap_s_tips() {
+        let argv = args(&["lint-marker", "--error-format=json"]);
+        let err = Cli::try_parse_from(&argv).err().unwrap();
+        let report = usage_report(&err, &argv, None).unwrap();
+        assert!(
+            report.message.contains("lint-markers"),
+            "{}",
+            report.message
+        );
+        assert!(report.message.contains("tip:"), "{}", report.message);
+        assert!(!report.message.contains("Usage:"), "{}", report.message);
+        assert!(!report.message.contains("--help"), "{}", report.message);
     }
 
     #[test]

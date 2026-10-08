@@ -23,7 +23,11 @@ fn main() -> ExitCode {
             };
         }
     };
-    let error_format = cli.error_format;
+    let (error_format, warning) =
+        cli.resolve_error_format(std::env::var_os(ERROR_FORMAT_ENV).as_deref());
+    if let Some(warning) = warning {
+        eprintln!("warning: {warning}");
+    }
     match cli.execute() {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {

@@ -104,6 +104,7 @@ fn run(root: &Path, head: &[&str], args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_patchcov"))
         // Keep an ambient override out of the run.
         .env_remove("PATCHCOV_CONFIG_DIR")
+        .env_remove("PATCHCOV_ERROR_FORMAT")
         // A temp directory inside a checkout must not make `root` look like part of it.
         .env("GIT_CEILING_DIRECTORIES", root.parent().unwrap())
         .arg("-C")
@@ -531,6 +532,19 @@ fn the_environment_variable_sets_the_format_and_the_flag_wins() {
         stderr(&output).starts_with("Error: "),
         "{}",
         stderr(&output)
+    );
+
+    // A value that is neither is ignored with a warning, not a failure of its own.
+    let output = with_env("xml", &[]);
+    assert_eq!(code(&output), 3);
+    let text = stderr(&output);
+    assert!(
+        text.contains("warning: ignoring PATCHCOV_ERROR_FORMAT=xml"),
+        "{text}"
+    );
+    assert!(
+        text.lines().last().unwrap().starts_with("Error: "),
+        "{text}"
     );
 
     // Empty counts as unset.

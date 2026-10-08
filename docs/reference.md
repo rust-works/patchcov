@@ -82,8 +82,8 @@ of `-o/--output` that prints a warning. `--fail-on-path-mismatch` is a hidden, d
 
 Each class of failure has its own exit code, so a script can tell a failed gate from an
 unreadable report without parsing stderr. The message on stderr is unchanged (its last line
-starts with `Error:`) unless you ask for [JSON](#error-output). The report itself, on stdout, is still printed when a *gate* fails, so
-a CI job can post it first.
+starts with `Error:`) unless you ask for [JSON](#error-output). The report itself, on stdout,
+is still printed when a *gate* fails, so a CI job can post it first.
 
 | Code | Meaning | Examples (stderr) |
 |-----:|---------|-------------------|
@@ -119,7 +119,8 @@ esac
 By default a failure ends stderr with one `Error: ...` line. A wrapper that wants the class
 and cause without parsing that line can ask for a JSON object instead, with
 `--error-format json` or `PATCHCOV_ERROR_FORMAT=json`. The flag wins over the variable, and an
-empty variable counts as unset. The values are `text` (the default) and `json`.
+empty variable counts as unset. The values are `text` (the default) and `json`; a variable with
+any other value is ignored with a warning, so a typo cannot stop a run.
 
 With `json`, a failing run prints one object on a single line, as the last line of stderr,
 instead of the `Error:` line. Warnings that patchcov prints earlier are unchanged, and so are
@@ -151,11 +152,11 @@ format. A message can contain newlines (a regex parse error does), escaped as us
 | `other` | `8` |
 
 The argument parser's own errors (a missing required flag, an unknown subcommand) are `usage`
-with an empty `chain`, and `message` is the parser's error text without its usage block. Because
-parsing had failed, patchcov finds the format by looking for `--error-format` among the arguments
-(the last one wins, and `--` ends the options) and in `PATCHCOV_ERROR_FORMAT`. `--help` and
-`--version` are not failures and print as usual. A bad value for `--error-format` itself is a
-parser error in the default format.
+with an empty `chain`, and `message` is the parser's error text, with any tips, without its
+usage block. Because parsing had failed, patchcov finds the format by looking for
+`--error-format` among the arguments (the last one wins, and `--` ends the options) and in
+`PATCHCOV_ERROR_FORMAT`. `--help` and `--version` are not failures and print as usual. A bad
+value for `--error-format` itself is a parser error in the default format.
 
 A failed gate is a `gate` object whose `message` names every failed gate, with the threshold and
 the measured value, as in the text; the gates are not separate fields.
