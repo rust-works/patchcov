@@ -2718,6 +2718,33 @@ mod tests {
     }
 
     #[test]
+    fn baseline_warning_lists_every_path_up_to_three() {
+        let (_dir, repo, base) = repo_with_added_file();
+        let baseline = repo.join("baseline.lcov");
+        let mut content = String::new();
+        for path in ["wrong/a.rs", "wrong/b.rs", "wrong/c.rs"] {
+            content.push_str(&format!("SF:{path}\nDA:1,1\nend_of_record\n"));
+        }
+        fs::write(&baseline, content).unwrap();
+        let mut cmd = command(write_head_lcov(&repo), &base);
+        cmd.baseline_report = Some(baseline);
+        cmd.allow_path_mismatch = true;
+        let outcome = cmd.run(Some(&repo)).unwrap();
+        // docs/reference.md: `unmatched` is complete exactly when its length equals
+        // `file_count`.
+        let Warning::PathMismatch {
+            file_count,
+            unmatched,
+            ..
+        } = &outcome.warnings[0]
+        else {
+            panic!("expected a path mismatch: {:?}", outcome.warnings);
+        };
+        assert_eq!(*file_count, 3);
+        assert_eq!(unmatched.len(), *file_count);
+    }
+
+    #[test]
     fn tracked_files_with_external_paths_and_exclusions_are_quiet() {
         let (_dir, repo, base) = repo_with_added_file();
         let report = repo.join("mixed.lcov");
