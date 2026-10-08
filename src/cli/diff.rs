@@ -1860,11 +1860,7 @@ mod tests {
         let warning = outcome.warnings[0].to_string();
         assert!(warning.contains("two.lcov"), "{warning}");
         assert!(warning.contains("--strip-prefix"), "{warning}");
-        assert!(
-            matches!(&outcome.warnings[0], Warning::PathMismatch { report, .. } if report.ends_with("two.lcov")),
-            "{:?}",
-            outcome.warnings[0]
-        );
+        assert_eq!(outcome.warnings[0].kind(), "path-mismatch");
     }
 
     #[test]
@@ -2585,17 +2581,16 @@ mod tests {
         cmd.allow_path_mismatch = true;
         let outcome = cmd.run(Some(&repo)).unwrap();
         assert_eq!(outcome.warnings.len(), 1);
-        let Warning::PathMismatch {
-            report,
-            file_count,
-            unmatched,
-        } = &outcome.warnings[0]
-        else {
-            panic!("{:?}", outcome.warnings[0]);
-        };
-        assert!(report.ends_with("baseline.lcov"), "{report}");
-        assert_eq!(*file_count, 4);
-        assert_eq!(unmatched, &["wrong/a.rs", "wrong/b.rs", "wrong/c.rs"]);
+        assert_eq!(
+            outcome.warnings[0],
+            Warning::PathMismatch {
+                report: repo.join("baseline.lcov").display().to_string(),
+                file_count: 4,
+                unmatched: ["wrong/a.rs", "wrong/b.rs", "wrong/c.rs"]
+                    .map(String::from)
+                    .to_vec(),
+            }
+        );
         let warning = outcome.warnings[0].to_string();
         for text in [
             "4 file path(s)",

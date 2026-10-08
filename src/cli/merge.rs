@@ -857,10 +857,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(outcome.warnings.len(), 1, "{:?}", outcome.warnings);
-        let Warning::ShardRoot(mismatch) = &outcome.warnings[0] else {
-            panic!("{:?}", outcome.warnings[0]);
-        };
-        assert!(mismatch.shard.ends_with("two.lcov"), "{mismatch:?}");
+        assert_eq!(outcome.warnings[0].kind(), "shard-root");
         assert!(outcome.warnings[0].to_string().contains("two.lcov"));
         assert!(fs::read_to_string(&out).unwrap().contains("SF:a.rs\n"));
     }
