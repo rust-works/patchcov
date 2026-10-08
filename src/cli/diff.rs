@@ -38,7 +38,7 @@ fn finite_percentage(value: &str) -> std::result::Result<f64, String> {
     if pct.is_finite() {
         Ok(pct)
     } else {
-        Err(format!("{value} is not a finite number"))
+        Err("must be a finite number (not NaN or infinity)".to_owned())
     }
 }
 
@@ -1703,14 +1703,24 @@ mod tests {
     fn thresholds_must_be_finite_numbers() {
         use clap::Parser;
         for flag in ["--fail-under-patch", "--fail-under-lines"] {
+            // `--flag=value`, so a leading `-` reaches the value parser instead of
+            // being read by clap as another flag.
             for bad in ["nan", "NaN", "inf", "infinity", "-inf", "1e999", "abc"] {
-                let parsed = DiffCommand::try_parse_from(["diff", "--report", "r.lcov", flag, bad]);
-                assert!(parsed.is_err(), "{flag} {bad} should be rejected");
+                let arg = format!("{flag}={bad}");
+                let parsed = DiffCommand::try_parse_from(["diff", "--report", "r.lcov", &arg]);
+                assert!(parsed.is_err(), "{arg} should be rejected");
             }
             for good in ["0", "80", "99.5", "100", "150"] {
-                let parsed =
-                    DiffCommand::try_parse_from(["diff", "--report", "r.lcov", flag, good]);
-                assert!(parsed.is_ok(), "{flag} {good} should be accepted");
+                let arg = format!("{flag}={good}");
+                let cmd =
+                    DiffCommand::try_parse_from(["diff", "--report", "r.lcov", &arg]).unwrap();
+                let expected = good.parse::<f64>().ok();
+                let got = if flag == "--fail-under-patch" {
+                    cmd.fail_under_patch
+                } else {
+                    cmd.fail_under_lines
+                };
+                assert_eq!(got, expected, "{arg}");
             }
         }
     }
@@ -1729,7 +1739,7 @@ mod tests {
         .unwrap()
         .to_string();
         assert!(err.contains("invalid value 'nan'"), "{err}");
-        assert!(err.contains("not a finite number"), "{err}");
+        assert!(err.contains("must be a finite number"), "{err}");
     }
 
     // ── sharded reports ──────────────────────────────────────────

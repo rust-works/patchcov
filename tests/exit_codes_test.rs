@@ -193,12 +193,7 @@ fn usage_errors_are_2() {
     assert_eq!(code(&fx.diff(&[])), 2);
     // A non-finite threshold would disable the gate (`nan`) or have no JSON form (`inf`).
     let report = fx.report();
-    for (flag, value) in [
-        ("--fail-under-patch", "nan"),
-        ("--fail-under-patch", "1e999"),
-        ("--fail-under-lines", "inf"),
-        ("--fail-under-lines", "-inf"),
-    ] {
+    for (flag, value) in [("--fail-under-patch", "nan"), ("--fail-under-lines", "inf")] {
         let output = fx.diff(&["--report", path(&report), flag, value]);
         assert_eq!(code(&output), 2, "{flag} {value}: {}", stderr(&output));
     }
