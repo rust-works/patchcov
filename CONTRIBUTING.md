@@ -77,6 +77,7 @@ Run the same checks as CI from your checkout:
 ```bash
 cargo fmt --check
 cargo test --locked --all-targets
+cargo test --locked --doc
 cargo clippy --locked --all-targets -- -D warnings
 cargo run --locked -- lint-markers
 cargo +1.88.0 check --locked --all-targets
