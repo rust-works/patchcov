@@ -9,7 +9,9 @@ git diff and tells you what share of the lines a change *added* are covered, whi
 new lines are not, and whether anything moved on code the change did not touch.
 
 - **Reads** lcov, llvm-cov JSON, Cobertura, JaCoCo XML and Go coverprofiles, detected
-  from the content.
+  from the content. Branch-aware scoring
+  ([`--branch-coverage`](docs/usage.md#opt-in-branch-coverage)) reads lcov and Cobertura
+  only and fails explicitly on the other formats.
 - **Reports** patch coverage, the uncovered new lines, per-file project deltas and
   indirect changes, as a markdown PR comment, YAML or JSON.
 - **Gates** a branch with `--fail-under-patch` and `--fail-under-lines`.
