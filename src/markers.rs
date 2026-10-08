@@ -131,6 +131,7 @@ impl FileMarkers {
 /// Displays as `path:line: message`, the line `patchcov lint-markers` prints in the
 /// default format; the parts are fields so `--error-format json` can print them as data.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct MarkerError {
     /// The file the marker is in, as passed to [`scan`].
     pub path: String,

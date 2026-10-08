@@ -229,7 +229,8 @@ The command prints the report to stdout and exits `0`, or `1` when a gate fails,
 can post the comment and then fail. Other failures have their own codes (`2` usage, `3` report,
 `4` marker, `5` config, `6` git, `7` path mismatch, `8` other), so a script can tell a failed
 gate from an unreadable report. See the [exit codes](docs/reference.md#exit-codes), and
-`--error-format json` for the cause as a JSON object on stderr, and warnings, `lint-markers` findings and the `merge` summary as JSON lines
+`--error-format json` for the cause as a JSON object on stderr, and warnings,
+`lint-markers` findings and the `merge` summary as JSON lines
 ([error output](docs/reference.md#error-output)).
 
 Where to go next:

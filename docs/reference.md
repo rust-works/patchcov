@@ -124,7 +124,8 @@ any other value is ignored with a warning, so a typo cannot stop a run.
 
 With `json`, a failing run prints one object on a single line, as the last line of stderr,
 instead of the `Error:` line. Stdout and the exit code are unchanged, and so is each warning's
-message. Lines printed earlier are JSON lines too, see [Warnings](#warnings) and [Findings and summary](#findings-and-summary) below.
+message. Lines printed earlier are JSON lines too, see [Warnings](#warnings) and
+[Findings and summary](#findings-and-summary) below.
 
 ```json
 {"level":"error","code":3,"kind":"report","message":"could not read coverage report ./missing.lcov","chain":["No such file or directory (os error 2)"]}
@@ -231,7 +232,8 @@ JSON line too, with the same text in `message` as the default format prints.
 `patchcov lint-markers` prints one object per file with a malformed marker (the first one in the file),
 before the failure. A finding is `level` `"error"` because it makes the run
 fail, but its `kind` is `"marker-finding"`; the failure that follows it has `kind` `"marker"`
-and a `code`, and is the last line.
+and a `code`, and is the last line. To find the failure, take the last line, not the first
+`"error"`.
 
 ```json
 {"level":"error","kind":"marker-finding","path":"src/a.rs","line":12,"message":"unterminated `reason=\"…\"` (missing closing quote)"}
