@@ -191,8 +191,13 @@ fn usage_errors_are_2() {
     let fx = Fixture::new();
     // From the argument parser.
     assert_eq!(code(&fx.diff(&[])), 2);
-    // From a flag combination the parser cannot check.
+    // A non-finite threshold would disable the gate (`nan`) or have no JSON form (`inf`).
     let report = fx.report();
+    for (flag, value) in [("--fail-under-patch", "nan"), ("--fail-under-lines", "inf")] {
+        let output = fx.diff(&["--report", path(&report), flag, value]);
+        assert_eq!(code(&output), 2, "{flag} {value}: {}", stderr(&output));
+    }
+    // From a flag combination the parser cannot check.
     let go = fx.file("go.cover", "mode: set\nexample.com/m/a.go:1.1,2.2 1 1\n");
     let output = fx.diff(&["--report", path(&go), "--branch-coverage"]);
     assert_eq!(code(&output), 2, "{}", stderr(&output));
