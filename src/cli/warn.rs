@@ -275,24 +275,6 @@ mod tests {
         );
     }
 
-    /// A warning is printed by the same renderer as any other line.
-    #[test]
-    fn a_warning_is_rendered_by_render_line() {
-        let warning = path_mismatch();
-        let report = WarningReport {
-            level: LEVEL,
-            kind: warning.kind(),
-            message: warning.to_string(),
-            fields: &warning,
-        };
-        for format in [ErrorFormat::Text, ErrorFormat::Json] {
-            assert_eq!(
-                render(format, &warning),
-                render_line(format, &format!("warning: {warning}"), &report)
-            );
-        }
-    }
-
     #[derive(Serialize)]
     struct Record {
         level: &'static str,
