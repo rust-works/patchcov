@@ -9,7 +9,9 @@
 use std::error::Error as StdError;
 use std::fmt;
 
-use serde::Serialize;
+use serde::{Serialize, Serializer};
+
+use crate::render::round2;
 
 /// A class of failure, and the exit code it ends the process with.
 ///
@@ -69,6 +71,7 @@ impl ExitKind {
         anyhow::Error::new(ExitError {
             kind: self,
             source: anyhow::Error::msg(message),
+            gates: Vec::new(),
         })
     }
 }
@@ -82,12 +85,19 @@ impl ExitKind {
 pub struct ExitError {
     kind: ExitKind,
     source: anyhow::Error,
+    gates: Vec<GateFailure>,
 }
 
 impl ExitError {
     /// The class of failure.
     pub const fn kind(&self) -> ExitKind {
         self.kind
+    }
+
+    /// The gates that failed, for a [`ExitKind::Gate`] error built with
+    /// [`gate_error`]; empty for every other error.
+    pub fn gates(&self) -> &[GateFailure] {
+        &self.gates
     }
 }
 
@@ -105,11 +115,15 @@ impl StdError for ExitError {
     }
 }
 
-/// The class `err` was tagged with, if any.
-fn kind_of(err: &anyhow::Error) -> Option<ExitKind> {
+/// The outermost tag on `err`, if any.
+fn tag_of(err: &anyhow::Error) -> Option<&ExitError> {
     err.chain()
         .find_map(|cause| cause.downcast_ref::<ExitError>())
-        .map(ExitError::kind)
+}
+
+/// The class `err` was tagged with, if any.
+fn kind_of(err: &anyhow::Error) -> Option<ExitKind> {
+    tag_of(err).map(ExitError::kind)
 }
 
 /// The class of `err`: its tag, or [`ExitKind::Other`] when it has none.
@@ -125,10 +139,105 @@ pub fn code(err: &anyhow::Error) -> u8 {
 /// The `level` of an [`ErrorReport`].
 const LEVEL: &str = "error";
 
+/// One failed coverage gate, with the numbers behind it.
+///
+/// The [`Display`](fmt::Display) form is the message printed in the default
+/// error format; the serialized form is an element of `gates` in the JSON error
+/// report, documented in `docs/reference.md#error-output`. Percentages are
+/// serialized rounded to two decimal places, like the `-o json` output.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "gate", rename_all = "kebab-case")]
+pub enum GateFailure {
+    /// `--fail-under-patch`: patch coverage is below the threshold.
+    FailUnderPatch {
+        /// The `--fail-under-patch` threshold.
+        threshold: f64,
+        /// The measured patch coverage.
+        #[serde(serialize_with = "rounded")]
+        measured: f64,
+    },
+    /// `--fail-under-lines`: overall line coverage is below the threshold, or
+    /// the report has no executable lines.
+    FailUnderLines {
+        /// The `--fail-under-lines` threshold.
+        threshold: f64,
+        /// The measured line coverage; `None` (`null`) when no executable line
+        /// is left to measure.
+        #[serde(serialize_with = "rounded_option")]
+        measured: Option<f64>,
+    },
+    /// `--fail-on-unmeasured` / `diff.require-measured`: touched files that match
+    /// the policy are absent from every coverage report.
+    FailOnUnmeasured {
+        /// The matching touched files, in path order.
+        files: Vec<String>,
+    },
+}
+
+// serde's `serialize_with` passes the field by reference.
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn rounded<S: Serializer>(value: &f64, serializer: S) -> Result<S::Ok, S::Error> {
+    round2(*value).serialize(serializer)
+}
+
+fn rounded_option<S: Serializer>(value: &Option<f64>, serializer: S) -> Result<S::Ok, S::Error> {
+    value.map(round2).serialize(serializer)
+}
+
+impl fmt::Display for GateFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::FailUnderPatch {
+                threshold,
+                measured,
+            } => write!(
+                f,
+                "patch coverage {measured:.2}% is below the --fail-under-patch threshold of {threshold:.2}%"
+            ),
+            Self::FailUnderLines {
+                threshold,
+                measured: Some(pct),
+            } => write!(
+                f,
+                "line coverage {pct:.2}% is below the --fail-under-lines threshold of {threshold:.2}%"
+            ),
+            Self::FailUnderLines {
+                threshold,
+                measured: None,
+            } => write!(
+                f,
+                "the report has no executable lines, so the --fail-under-lines threshold of {threshold:.2}% cannot be met"
+            ),
+            Self::FailOnUnmeasured { files } => write!(
+                f,
+                "touched files absent from every coverage report (--fail-on-unmeasured / diff.require-measured): {}",
+                files.join(", ")
+            ),
+        }
+    }
+}
+
+/// A [`ExitKind::Gate`] error for `failures`, which must not be empty.
+///
+/// The message names every failed gate, joined by `; `. The failures stay on the
+/// error, for the `gates` field of the JSON report.
+pub fn gate_error(failures: Vec<GateFailure>) -> anyhow::Error {
+    let message = failures
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("; ");
+    anyhow::Error::new(ExitError {
+        kind: ExitKind::Gate,
+        source: anyhow::Error::msg(message),
+        gates: failures,
+    })
+}
+
 /// A failure as one machine-readable object, printed to stderr by
 /// `--error-format json`. The fields are part of the command-line contract and
 /// documented in `docs/reference.md#error-output`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ErrorReport {
     /// Always `"error"`, so a consumer can tell this object from a warning line.
     pub level: &'static str,
@@ -141,6 +250,10 @@ pub struct ErrorReport {
     /// The causes beneath `message`, outermost first. `message` followed by
     /// these, joined with `: `, is the text after `Error: ` in the default format.
     pub chain: Vec<String>,
+    /// For a failed gate, the gates that failed, each with its threshold and
+    /// measured value. Absent for every other class of failure.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gates: Option<Vec<GateFailure>>,
 }
 
 impl ErrorReport {
@@ -154,6 +267,10 @@ impl ErrorReport {
             kind: kind.name(),
             message: messages.next().unwrap_or_default(),
             chain: messages.collect(),
+            gates: tag_of(err)
+                .map(ExitError::gates)
+                .filter(|gates| !gates.is_empty())
+                .map(<[GateFailure]>::to_vec),
         }
     }
 
@@ -165,6 +282,7 @@ impl ErrorReport {
             kind: ExitKind::Usage.name(),
             message: message.into(),
             chain: Vec::new(),
+            gates: None,
         }
     }
 
@@ -192,7 +310,11 @@ where
             if kind_of(&err).is_some() {
                 err
             } else {
-                anyhow::Error::new(ExitError { kind, source: err })
+                anyhow::Error::new(ExitError {
+                    kind,
+                    source: err,
+                    gates: Vec::new(),
+                })
             }
         })
     }
@@ -299,6 +421,102 @@ mod tests {
         );
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["message"], "it said \"no\"\nreally");
+    }
+
+    fn failures() -> Vec<GateFailure> {
+        vec![
+            GateFailure::FailUnderPatch {
+                threshold: 80.0,
+                measured: 200.0 / 3.0,
+            },
+            GateFailure::FailUnderLines {
+                threshold: 90.0,
+                measured: Some(40.0),
+            },
+            GateFailure::FailUnderLines {
+                threshold: 50.0,
+                measured: None,
+            },
+            GateFailure::FailOnUnmeasured {
+                files: vec!["a.rs".into(), "b.rs".into()],
+            },
+        ]
+    }
+
+    /// The default text is a contract too: these are the messages in the docs.
+    #[test]
+    fn a_gate_failure_displays_as_its_message() {
+        let messages: Vec<String> = failures().iter().map(ToString::to_string).collect();
+        assert_eq!(
+            messages,
+            [
+                "patch coverage 66.67% is below the --fail-under-patch threshold of 80.00%",
+                "line coverage 40.00% is below the --fail-under-lines threshold of 90.00%",
+                "the report has no executable lines, so the --fail-under-lines threshold of 50.00% cannot be met",
+                "touched files absent from every coverage report (--fail-on-unmeasured / diff.require-measured): a.rs, b.rs",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_gate_error_joins_the_messages_and_keeps_the_data() {
+        let err = gate_error(failures());
+        assert_eq!(code(&err), 1);
+        let text = format!("{err:#}");
+        assert_eq!(text.matches("; ").count(), 3, "{text}");
+        assert!(text.starts_with("patch coverage 66.67%"), "{text}");
+        assert_eq!(tag_of(&err).unwrap().gates(), failures());
+    }
+
+    /// Fields in the documented order; percentages rounded, thresholds as given.
+    #[test]
+    fn a_gate_report_lists_the_gates() {
+        let report = ErrorReport::new(&gate_error(failures()));
+        let json: serde_json::Value = serde_json::from_str(&report.to_json()).unwrap();
+        assert_eq!(
+            json["gates"],
+            serde_json::json!([
+                {"gate": "fail-under-patch", "threshold": 80.0, "measured": 66.67},
+                {"gate": "fail-under-lines", "threshold": 90.0, "measured": 40.0},
+                {"gate": "fail-under-lines", "threshold": 50.0, "measured": null},
+                {"gate": "fail-on-unmeasured", "files": ["a.rs", "b.rs"]},
+            ])
+        );
+        let line = report.to_json();
+        assert!(
+            line.contains(
+                r#""gates":[{"gate":"fail-under-patch","threshold":80.0,"measured":66.67}"#
+            ),
+            "{line}"
+        );
+        assert!(!line.contains('\n'), "{line}");
+    }
+
+    /// `gates` is for a gate that carries data and nothing else.
+    #[test]
+    fn only_a_gate_with_data_has_gates() {
+        for err in [
+            ExitKind::Gate.error("no data"),
+            fail(ExitKind::Report),
+            anyhow!("boom"),
+        ] {
+            let report = ErrorReport::new(&err);
+            assert_eq!(report.gates, None);
+            assert!(!report.to_json().contains("gates"));
+        }
+        assert_eq!(ErrorReport::usage("bad flag").gates, None);
+    }
+
+    /// Context added after the gate error does not hide its data.
+    #[test]
+    fn the_gates_survive_added_context() {
+        let err = Err::<(), _>(gate_error(failures()))
+            .context("outer")
+            .classify(ExitKind::Other)
+            .unwrap_err();
+        let report = ErrorReport::new(&err);
+        assert_eq!(report.kind, "gate");
+        assert_eq!(report.gates, Some(failures()));
     }
 
     #[test]
