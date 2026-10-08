@@ -94,6 +94,10 @@ pub struct MergeOutcome {
     pub warnings: Vec<Warning>,
 }
 
+/// The `level` and `kind` of the [`MergeSummary`] line.
+const SUMMARY_LEVEL: &str = "info";
+const SUMMARY_KIND: &str = "merge-summary";
+
 /// The JSON object for the summary line, with its fields in the documented order
 /// (`docs/reference.md#findings-and-summary`).
 #[derive(Debug, Serialize, PartialEq)]
@@ -113,8 +117,8 @@ struct MergeSummary<'a> {
 impl<'a> MergeSummary<'a> {
     fn new(outcome: &MergeOutcome, message: &'a str) -> Self {
         Self {
-            level: "info",
-            kind: "merge-summary",
+            level: SUMMARY_LEVEL,
+            kind: SUMMARY_KIND,
             message,
             inputs: outcome.inputs,
             output: outcome.output.display().to_string(),
@@ -147,7 +151,7 @@ impl MergeCommand {
             pct(outcome.percent),
         );
         let summary = MergeSummary::new(&outcome, &text);
-        emit(&text, &summary);
+        emit(SUMMARY_LEVEL, SUMMARY_KIND, &text, &summary);
         Ok(())
     }
 

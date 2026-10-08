@@ -278,18 +278,7 @@ impl ErrorReport {
 
     /// The report as a single line of JSON.
     pub fn to_json(&self) -> String {
-        json_line(self, || self.fallback())
-    }
-
-    /// The report without `chain` and `gates`, for a line that cannot be
-    /// serialized in full: the exit code, class and message still reach a wrapper.
-    fn fallback(&self) -> serde_json::Value {
-        serde_json::json!({
-            "level": self.level,
-            "code": self.code,
-            "kind": self.kind,
-            "message": self.message,
-        })
+        json_line(self, self.level, self.kind, &self.message)
     }
 }
 
@@ -586,19 +575,5 @@ mod tests {
             .unwrap_err();
         assert_eq!(code(&err), ExitKind::Other.code());
         assert_eq!(err.to_string(), "x");
-    }
-
-    /// What survives when the full report cannot be serialized.
-    #[test]
-    fn fallback_keeps_level_code_kind_and_message() {
-        let err = ExitKind::Config.error("bad config");
-        assert_eq!(
-            ErrorReport::new(&err).fallback().to_string(),
-            r#"{"code":5,"kind":"config","level":"error","message":"bad config"}"#
-        );
-        assert_eq!(
-            ErrorReport::usage("bad flag").fallback().to_string(),
-            r#"{"code":2,"kind":"usage","level":"error","message":"bad flag"}"#
-        );
     }
 }

@@ -279,9 +279,9 @@ and a `code`, and is the last line. To find the failure, take the last line, not
 | `percent` | number or `null` | Line coverage on a 0 to 100 scale, **not rounded** (`message` rounds it); `null` when there are no executable lines |
 
 A line stays a JSON object even if patchcov cannot serialize its full record (a bug, not
-something a command-line can cause). The line then has only `level` and `message`, plus `kind`
-for a warning, and `code` and `kind` for the final failure, so stderr never has a blank line
-where a diagnostic belonged. A finding or the merge summary in that case has `level` `"error"`.
+something a command line can cause). It then has only `level`, `kind` and `message`, the first
+two being the record's own, so stderr never has a blank line where a diagnostic belonged. A
+finding's `message` is then the default format's whole line, `path:line:` included.
 
 ## Output schema
 
