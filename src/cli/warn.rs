@@ -12,6 +12,7 @@
 use std::fmt;
 use std::sync::OnceLock;
 
+use serde::ser::SerializeMap;
 use serde::Serialize;
 
 use super::ErrorFormat;
@@ -27,23 +28,42 @@ pub fn set_format(format: ErrorFormat) {
 }
 
 /// A deprecated flag that still parses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeprecatedFlag {
     /// `diff --format`, replaced by `-o/--output`.
-    #[serde(rename = "--format")]
     Format,
     /// `diff --fail-on-path-mismatch`, which a path mismatch no longer needs.
-    #[serde(rename = "--fail-on-path-mismatch")]
     FailOnPathMismatch,
 }
 
 impl DeprecatedFlag {
+    /// The flag, with its dashes.
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Format => "--format",
+            Self::FailOnPathMismatch => "--fail-on-path-mismatch",
+        }
+    }
+
     /// What replaces the flag, if anything.
     const fn replacement(self) -> Option<&'static str> {
         match self {
             Self::Format => Some("-o/--output"),
             Self::FailOnPathMismatch => None,
         }
+    }
+}
+
+/// The fields of a `deprecated` warning, both derived from the flag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Deprecation(DeprecatedFlag);
+
+impl Serialize for Deprecation {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut map = serializer.serialize_map(Some(2))?;
+        map.serialize_entry("flag", self.0.name())?;
+        map.serialize_entry("replacement", &self.0.replacement())?;
+        map.end()
     }
 }
 
@@ -78,12 +98,7 @@ impl GlobOrigin {
 #[non_exhaustive]
 pub enum Warning {
     /// A deprecated flag was used.
-    Deprecated {
-        /// The flag, with its dashes.
-        flag: DeprecatedFlag,
-        /// What to use instead; `None` (`null`) when nothing replaces it.
-        replacement: Option<&'static str>,
-    },
+    Deprecated(Deprecation),
     /// A report's paths match no tracked file, and `--allow-path-mismatch` let the
     /// run continue.
     PathMismatch {
@@ -108,17 +123,14 @@ pub enum Warning {
 impl Warning {
     /// A warning about the deprecated `flag`.
     pub const fn deprecated(flag: DeprecatedFlag) -> Self {
-        Self::Deprecated {
-            flag,
-            replacement: flag.replacement(),
-        }
+        Self::Deprecated(Deprecation(flag))
     }
 
     /// The stable name of this class of warning, `kind` in the JSON warning
     /// object, listed in `docs/reference.md#warnings`.
     pub const fn kind(&self) -> &'static str {
         match self {
-            Self::Deprecated { .. } => "deprecated",
+            Self::Deprecated(_) => "deprecated",
             Self::PathMismatch { .. } => "path-mismatch",
             Self::ShardRoot(_) => "shard-root",
             Self::GlobNoMatch { .. } => "glob-no-match",
@@ -130,16 +142,16 @@ impl fmt::Display for Warning {
     /// The message: what follows `warning: ` in the default format.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Deprecated {
-                flag: DeprecatedFlag::Format,
-                ..
-            } => f.write_str("--format is deprecated; use -o/--output instead"),
-            Self::Deprecated {
-                flag: DeprecatedFlag::FailOnPathMismatch,
-                ..
-            } => f.write_str(
-                "--fail-on-path-mismatch is deprecated and has no effect; a path mismatch is an error unless --allow-path-mismatch or diff.allow-path-mismatch is set",
-            ),
+            Self::Deprecated(Deprecation(flag)) => match flag.replacement() {
+                Some(replacement) => {
+                    write!(f, "{} is deprecated; use {replacement} instead", flag.name())
+                }
+                None => write!(
+                    f,
+                    "{} is deprecated and has no effect; a path mismatch is an error unless --allow-path-mismatch or diff.allow-path-mismatch is set",
+                    flag.name()
+                ),
+            },
             Self::PathMismatch {
                 report,
                 file_count,

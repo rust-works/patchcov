@@ -57,9 +57,10 @@ pub fn require_executable_lines(label: &str, report: &CoverageReport) -> Result<
 /// [`prefix_mismatch`].
 ///
 /// Its [`Display`](fmt::Display) is the warning `patchcov` prints; the fields are
-/// what `--error-format json` adds to that warning, see
-/// `docs/reference.md#warnings`.
+/// what `--error-format json` adds to that warning, under the names they have
+/// here, see `docs/reference.md#warnings`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 pub struct PrefixMismatch {
     /// The shard, as named in messages (normally its path).
     pub shard: String,
