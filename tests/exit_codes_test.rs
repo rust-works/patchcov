@@ -482,7 +482,7 @@ fn a_json_error_carries_the_causes() {
         "{value}"
     );
     assert!(
-        value["chain"][0].as_str().unwrap().contains("No such file"),
+        value["chain"][0].as_str().unwrap().contains("os error 2"),
         "{value}"
     );
 }
