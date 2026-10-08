@@ -33,6 +33,7 @@ fn lint_with(root: &Path, flags: &[&str], paths: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_patchcov"))
         // Keep an ambient override out of the run.
         .env_remove("PATCHCOV_CONFIG_DIR")
+        .env_remove("PATCHCOV_ERROR_FORMAT")
         .args(["lint-markers", "-C"])
         .arg(root)
         .args(flags)

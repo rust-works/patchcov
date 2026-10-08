@@ -104,6 +104,7 @@ fn run(root: &Path, head: &[&str], args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_patchcov"))
         // Keep an ambient override out of the run.
         .env_remove("PATCHCOV_CONFIG_DIR")
+        .env_remove("PATCHCOV_ERROR_FORMAT")
         // A temp directory inside a checkout must not make `root` look like part of it.
         .env("GIT_CEILING_DIRECTORIES", root.parent().unwrap())
         .arg("-C")
@@ -338,4 +339,284 @@ fn the_message_is_unchanged_by_the_code() {
     );
     // The cause is part of the one-line chain, as it always was.
     assert!(last.contains("missing.lcov: "), "{text}");
+}
+
+/// The last line of stderr, parsed as the JSON error report.
+fn report(output: &Output) -> serde_json::Value {
+    let text = stderr(output);
+    let last = text.lines().last().unwrap_or_default();
+    serde_json::from_str(last).unwrap_or_else(|err| panic!("not JSON ({err}): {text}"))
+}
+
+/// Runs `args` twice, in the default format and with `--error-format json`, and
+/// checks that only the shape of the failure on stderr differs.
+fn assert_json_error(fx: &Fixture, args: &[&str], code: i32, kind: &str) {
+    let plain = run(fx.root(), args, &[]);
+    let mut with_flag: Vec<&str> = args.to_vec();
+    with_flag.extend(["--error-format", "json"]);
+    let json = run(fx.root(), &with_flag, &[]);
+
+    assert_eq!(self::code(&plain), code, "{args:?}: {}", stderr(&plain));
+    assert_eq!(self::code(&json), code, "{args:?}: {}", stderr(&json));
+    assert_eq!(plain.stdout, json.stdout, "{args:?}: stdout is unchanged");
+
+    let value = report(&json);
+    assert_eq!(value["code"], code, "{args:?}: {value}");
+    assert_eq!(value["kind"], kind, "{args:?}: {value}");
+    let object = value.as_object().unwrap();
+    assert_eq!(
+        object.keys().collect::<Vec<_>>(),
+        ["chain", "code", "kind", "message"],
+        "{args:?}"
+    );
+    let chain: Vec<&str> = value["chain"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|cause| cause.as_str().unwrap())
+        .collect();
+    let message = value["message"].as_str().unwrap();
+    assert!(!message.is_empty(), "{args:?}");
+
+    // The same text as the default format, which is still what it was.
+    let mut joined = vec![message];
+    joined.extend(chain);
+    let plain_text = stderr(&plain);
+    if kind == "usage" && !plain_text.contains("Error: ") {
+        // clap's own error: the message is its first paragraph.
+        assert!(plain_text.contains(message), "{args:?}: {plain_text}");
+    } else {
+        let expected = format!("Error: {}", joined.join(": "));
+        // A message may itself span lines, so compare the whole tail.
+        assert!(
+            plain_text.trim_end().ends_with(&expected),
+            "{args:?}: {plain_text}"
+        );
+    }
+    // One object, as the last line, and no `Error:` line in its place.
+    assert!(
+        !stderr(&json).contains("Error: "),
+        "{args:?}: {}",
+        stderr(&json)
+    );
+}
+
+#[test]
+fn json_errors_name_each_class() {
+    let fx = Fixture::new();
+    let report = fx.report();
+    let report = path(&report);
+    let base = fx.base.clone();
+    let diff = |extra: &[&'static str]| -> Vec<String> {
+        let mut args = vec!["diff".to_string(), "--base-ref".into(), base.clone()];
+        args.extend(extra.iter().map(ToString::to_string));
+        args
+    };
+    let check = |args: Vec<String>, code: i32, kind: &str| {
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        assert_json_error(&fx, &args, code, kind);
+    };
+
+    // gate
+    let mut args = diff(&["--fail-under-patch", "80"]);
+    args.extend(["--report".into(), report.to_string()]);
+    check(args, 1, "gate");
+    // usage: from the argument parser, and from a flag combination it cannot check
+    check(diff(&[]), 2, "usage");
+    let go = fx.file("go.cover", "mode: set\nexample.com/m/a.go:1.1,2.2 1 1\n");
+    let mut args = diff(&["--branch-coverage"]);
+    args.extend(["--report".into(), path(&go).to_string()]);
+    check(args, 2, "usage");
+    // report
+    let mut args = diff(&[]);
+    args.extend(["--report".into(), "missing.lcov".to_string()]);
+    check(args, 3, "report");
+    // marker
+    let marker = format!(
+        "// {} ignore reason=\"unclosed\"\n",
+        patchcov::markers::INTRODUCER
+    );
+    fx.file("m.rs", &format!("{marker}fn m() {{}}\n"));
+    check(vec!["lint-markers".into(), "m.rs".into()], 4, "marker");
+    // config
+    let mut args = diff(&["--ignore-filename-regex", "("]);
+    args.extend(["--report".into(), report.to_string()]);
+    check(args, 5, "config");
+    // git
+    let mut args = vec![
+        "diff".to_string(),
+        "--base-ref".into(),
+        "no-such-ref".into(),
+    ];
+    args.extend(["--report".into(), report.to_string()]);
+    check(args, 6, "git");
+    // path-mismatch
+    let elsewhere = fx.file(
+        "elsewhere.lcov",
+        "SF:nowhere/else.rs\nDA:1,1\nend_of_record\n",
+    );
+    let mut args = diff(&[]);
+    args.extend(["--report".into(), path(&elsewhere).to_string()]);
+    check(args, 7, "path-mismatch");
+    // other
+    let args = vec![
+        "merge".to_string(),
+        report.to_string(),
+        "-o".into(),
+        "no-such-dir/merged.lcov".into(),
+    ];
+    check(args, 8, "other");
+}
+
+#[test]
+fn a_json_error_carries_the_causes() {
+    let fx = Fixture::new();
+    let missing = fx.root().join("missing.lcov");
+    let output = fx.diff(&["--report", path(&missing), "--error-format", "json"]);
+    let value = report(&output);
+    assert!(
+        value["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("could not read coverage report "),
+        "{value}"
+    );
+    assert!(
+        value["chain"][0].as_str().unwrap().contains("os error 2"),
+        "{value}"
+    );
+}
+
+#[test]
+fn a_gate_failure_still_prints_the_report_to_stdout() {
+    let fx = Fixture::new();
+    let report = fx.report();
+    let output = fx.diff(&[
+        "--report",
+        path(&report),
+        "--fail-under-patch",
+        "80",
+        "--error-format=json",
+    ]);
+    assert_eq!(code(&output), 1);
+    assert!(!output.stdout.is_empty());
+    assert!(self::report(&output)["message"]
+        .as_str()
+        .unwrap()
+        .contains("--fail-under-patch"));
+}
+
+#[test]
+fn the_environment_variable_sets_the_format_and_the_flag_wins() {
+    let fx = Fixture::new();
+    let missing = fx.root().join("missing.lcov");
+    let args = ["diff", "--report", path(&missing)];
+    let with_env = |value: &str, extra: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_patchcov"))
+            .env("PATCHCOV_ERROR_FORMAT", value)
+            .env("GIT_CEILING_DIRECTORIES", fx.root().parent().unwrap())
+            .arg("-C")
+            .arg(fx.root())
+            .args(args)
+            .args(extra)
+            .output()
+            .unwrap()
+    };
+
+    let output = with_env("json", &[]);
+    assert_eq!(code(&output), 3);
+    assert_eq!(report(&output)["kind"], "report");
+
+    let output = with_env("json", &["--error-format", "text"]);
+    assert!(
+        stderr(&output).starts_with("Error: "),
+        "{}",
+        stderr(&output)
+    );
+
+    // A value that is neither is ignored with a warning, not a failure of its own.
+    let output = with_env("xml", &[]);
+    assert_eq!(code(&output), 3);
+    let text = stderr(&output);
+    assert!(
+        text.contains("warning: ignoring PATCHCOV_ERROR_FORMAT=xml"),
+        "{text}"
+    );
+    assert!(
+        text.lines().last().unwrap().starts_with("Error: "),
+        "{text}"
+    );
+
+    // Empty counts as unset.
+    let output = with_env("", &[]);
+    assert_eq!(code(&output), 3);
+    assert!(
+        stderr(&output).starts_with("Error: "),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn the_flag_is_accepted_before_the_subcommand() {
+    let fx = Fixture::new();
+    let missing = fx.root().join("missing.lcov");
+    let output = run(
+        fx.root(),
+        &["--error-format=json", "diff", "--report", path(&missing)],
+        &[],
+    );
+    assert_eq!(report(&output)["kind"], "report");
+}
+
+#[test]
+fn argument_parser_errors_are_json_too() {
+    let fx = Fixture::new();
+    let report_missing = fx.diff(&["--error-format", "json"]);
+    assert_eq!(code(&report_missing), 2);
+    let value = report(&report_missing);
+    assert_eq!(value["kind"], "usage");
+    assert_eq!(value["chain"].as_array().unwrap().len(), 0);
+    let message = value["message"].as_str().unwrap();
+    assert!(message.contains("--report"), "{message}");
+    assert!(!message.contains("Usage:"), "{message}");
+    assert_eq!(stderr(&report_missing).lines().count(), 1);
+
+    // An unknown subcommand, with the format from the flag in either spelling
+    // and from the environment.
+    for args in [
+        &["nonsense", "--error-format=json"][..],
+        &["--error-format", "json", "nonsense"][..],
+    ] {
+        let output = run(fx.root(), args, &[]);
+        assert_eq!(code(&output), 2);
+        assert_eq!(report(&output)["kind"], "usage", "{args:?}");
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_patchcov"))
+        .env("PATCHCOV_ERROR_FORMAT", "json")
+        .arg("nonsense")
+        .output()
+        .unwrap();
+    assert_eq!(code(&output), 2);
+    assert_eq!(report(&output)["kind"], "usage");
+
+    // A bad value for the flag itself is a plain parser error.
+    let output = run(fx.root(), &["diff", "--error-format", "xml"], &[]);
+    assert_eq!(code(&output), 2);
+    assert!(
+        stderr(&output).starts_with("error: "),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn help_and_version_are_not_errors() {
+    let fx = Fixture::new();
+    for flag in ["--help", "--version"] {
+        let output = run(fx.root(), &[flag, "--error-format=json"], &[]);
+        assert_eq!(code(&output), 0, "{flag}");
+        assert!(!output.stdout.is_empty(), "{flag}");
+        assert!(output.stderr.is_empty(), "{flag}: {}", stderr(&output));
+    }
 }

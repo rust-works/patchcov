@@ -12,6 +12,7 @@ binary you have.
 - [`patchcov merge` flags](#patchcov-merge-flags)
 - [`patchcov lint-markers` flags](#patchcov-lint-markers-flags)
 - [Exit codes](#exit-codes)
+- [Error output](#error-output) (JSON on stderr)
 - [Output schema](#output-schema) (JSON and YAML)
 - [`.patchcov/config.yaml`](#patchcovconfigyaml)
 - [Environment variables](#environment-variables)
@@ -25,8 +26,9 @@ binary you have.
 | `patchcov lint-markers`  | Check `patchcov: coverage` source markers without a coverage report     |
 
 `-C, --repo <PATH>` is accepted by every command, before or after the subcommand. It runs
-patchcov as if started in `<PATH>`, like `git -C`. `-h/--help` and `-V/--version` work
-everywhere.
+patchcov as if started in `<PATH>`, like `git -C`. `--error-format <text|json>` is accepted
+the same way and chooses how a failure is printed; see [error output](#error-output).
+`-h/--help` and `-V/--version` work everywhere.
 
 ## `patchcov diff` flags
 
@@ -80,8 +82,8 @@ of `-o/--output` that prints a warning. `--fail-on-path-mismatch` is a hidden, d
 
 Each class of failure has its own exit code, so a script can tell a failed gate from an
 unreadable report without parsing stderr. The message on stderr is unchanged (its last line
-starts with `Error:`). The report itself, on stdout, is still printed when a *gate* fails, so
-a CI job can post it first.
+starts with `Error:`) unless you ask for [JSON](#error-output). The report itself, on stdout,
+is still printed when a *gate* fails, so a CI job can post it first.
 
 | Code | Meaning | Examples (stderr) |
 |-----:|---------|-------------------|
@@ -111,6 +113,53 @@ case $? in
   *) echo "patchcov could not run" >&2 ;;     # no usable report; do not post
 esac
 ```
+
+## Error output
+
+By default a failure ends stderr with one `Error: ...` line. A wrapper that wants the class
+and cause without parsing that line can ask for a JSON object instead, with
+`--error-format json` or `PATCHCOV_ERROR_FORMAT=json`. The flag wins over the variable, and an
+empty variable counts as unset. The values are `text` (the default) and `json`; a variable with
+any other value is ignored with a warning, so a typo cannot stop a run.
+
+With `json`, a failing run prints one object on a single line, as the last line of stderr,
+instead of the `Error:` line. Warnings that patchcov prints earlier are unchanged, and so are
+stdout and the exit code.
+
+```json
+{"code":3,"kind":"report","message":"could not read coverage report ./missing.lcov","chain":["No such file or directory (os error 2)"]}
+```
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `code` | number | The process exit code, from the [table above](#exit-codes) |
+| `kind` | string | The name of the class of failure, from the table below; stable like the code |
+| `message` | string | The outermost error message |
+| `chain` | array of strings | The causes beneath `message`, outermost first; empty when there are none |
+
+`message` and then `chain`, joined with `: `, is the text that follows `Error: ` in the default
+format. A message can contain newlines (a regex parse error does), escaped as usual in JSON.
+
+| `kind` | `code` |
+|--------|-------:|
+| `gate` | `1` |
+| `usage` | `2` |
+| `report` | `3` |
+| `marker` | `4` |
+| `config` | `5` |
+| `git` | `6` |
+| `path-mismatch` | `7` |
+| `other` | `8` |
+
+The argument parser's own errors (a missing required flag, an unknown subcommand) are `usage`
+with an empty `chain`, and `message` is the parser's error text, with any tips, without its
+usage block. Because parsing had failed, patchcov finds the format by looking for
+`--error-format` among the arguments (the last one wins, and `--` ends the options) and in
+`PATCHCOV_ERROR_FORMAT`. `--help` and `--version` are not failures and print as usual. A bad
+value for `--error-format` itself is a parser error in the default format.
+
+A failed gate is a `gate` object whose `message` names every failed gate, with the threshold and
+the measured value, as in the text; the gates are not separate fields.
 
 ## Output schema
 
@@ -333,6 +382,7 @@ file scans nothing and prints a warning. See
 
 | Variable | Used by | Meaning |
 |----------|---------|---------|
+| `PATCHCOV_ERROR_FORMAT` | every command | Fallback for `--error-format`: `text` or `json`. Empty is ignored. See [error output](#error-output) |
 | `PATCHCOV_CONFIG_DIR` | every command that reads config | Directory holding `config.yaml`; overrides discovery, overridden by `--config-dir`. Empty is ignored |
 | `COVERAGE_ARTIFACT_URL` | `diff` | Fallback for `--artifact-url` |
 | `COVERAGE_RUN_URL` | `diff` | Fallback for `--run-url` |
