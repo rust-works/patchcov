@@ -1,9 +1,12 @@
-//! Warnings on stderr, in the format `--error-format` selects.
+//! Warnings and other diagnostic lines on stderr, in the format `--error-format`
+//! selects.
 //!
 //! Every non-fatal problem patchcov reports goes through [`warn`], so a wrapper
 //! that asked for `--error-format json` gets one JSON object per warning instead
 //! of a `warning: ...` line. The object is described in
-//! `docs/reference.md#warnings`.
+//! `docs/reference.md#warnings`. The other lines a command prints (the findings
+//! of `lint-markers`, the summary of `merge`) go through [`emit`], which does the
+//! same for an object of the command's own.
 //!
 //! A [`Warning`] holds the data that identifies its subject, and its
 //! [`Display`](fmt::Display) renders the message from it, so the text and the
@@ -199,6 +202,28 @@ pub fn warn(warning: &Warning) {
     );
 }
 
+/// Prints a line to stderr: `text` in the default format, `record` as one JSON
+/// object under `--error-format json`.
+pub fn emit(text: impl AsRef<str>, record: &impl Serialize) {
+    eprintln!(
+        "{}",
+        render_line(
+            FORMAT.get().copied().unwrap_or_default(),
+            text.as_ref(),
+            record
+        )
+    );
+}
+
+/// The line `emit` prints.
+fn render_line(format: ErrorFormat, text: &str, record: &impl Serialize) -> String {
+    match format {
+        ErrorFormat::Text => text.to_string(),
+        // Records hold strings, numbers and options, which always serialize.
+        ErrorFormat::Json => serde_json::to_string(record).unwrap_or_default(),
+    }
+}
+
 /// The line `warn` prints.
 fn render(format: ErrorFormat, warning: &Warning) -> String {
     match format {
@@ -252,6 +277,38 @@ mod tests {
             line,
             "warning: --format is deprecated; use -o/--output instead"
         );
+    }
+
+    #[derive(Serialize)]
+    struct Record {
+        level: &'static str,
+        n: Option<u32>,
+        message: &'static str,
+    }
+
+    #[test]
+    fn emit_text_is_the_text_untouched() {
+        let record = Record {
+            level: "info",
+            n: None,
+            message: "ignored",
+        };
+        assert_eq!(
+            render_line(ErrorFormat::Text, "as is: 1", &record),
+            "as is: 1"
+        );
+    }
+
+    /// One line, the record's fields in declaration order, `None` as `null`.
+    #[test]
+    fn emit_json_is_the_record_on_one_line() {
+        let record = Record {
+            level: "info",
+            n: None,
+            message: "two\nlines",
+        };
+        let line = render_line(ErrorFormat::Json, "unused", &record);
+        assert_eq!(line, r#"{"level":"info","n":null,"message":"two\nlines"}"#);
     }
 
     /// The messages are unchanged from before the warnings carried fields.

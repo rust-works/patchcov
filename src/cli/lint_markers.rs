@@ -6,16 +6,46 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use git2::Repository;
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
+use serde::Serialize;
 
 use super::diff::load_coverage_config;
 use super::exit::{Classify, ExitKind};
-use super::warn::{warn, GlobOrigin, Warning};
+use super::warn::{emit, warn, GlobOrigin, Warning};
 use crate::config::resolve_config_dir_at;
 use crate::markers;
 
 /// Index modes of a regular file. A symlink (`0o120000`) or a gitlink
 /// (`0o160000`, a submodule — a directory in the worktree) is not source text.
 const REGULAR_FILE_MODES: [u32; 2] = [0o100_644, 0o100_755];
+
+/// The `level` of a [`Finding`]: it makes the run fail, as the final failure does.
+const FINDING_LEVEL: &str = "error";
+
+/// The `kind` of a [`Finding`]; the run's final failure has `"marker"`.
+const FINDING_KIND: &str = "marker-finding";
+
+/// The JSON object for one malformed marker, with its fields in the documented
+/// order (`docs/reference.md#findings-and-summary`).
+#[derive(Debug, Serialize, PartialEq, Eq)]
+struct Finding<'a> {
+    level: &'static str,
+    kind: &'static str,
+    path: &'a str,
+    line: u32,
+    message: &'a str,
+}
+
+impl<'a> Finding<'a> {
+    fn new(error: &'a markers::MarkerError) -> Self {
+        Self {
+            level: FINDING_LEVEL,
+            kind: FINDING_KIND,
+            path: &error.path,
+            line: error.line,
+            message: &error.message,
+        }
+    }
+}
 
 /// Checks source coverage markers without generating a coverage report.
 #[derive(Parser)]
@@ -92,7 +122,7 @@ impl LintMarkersCommand {
             };
             let display = path.display().to_string();
             if let Err(error) = markers::scan(&display, &source) {
-                eprintln!("{error:#}");
+                emit(error.to_string(), &Finding::new(&error));
                 failed = true;
             }
         }
@@ -167,6 +197,22 @@ fn tracked_paths(repo: &Repository) -> Result<Vec<PathBuf>> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    /// The object keeps the documented fields in order, and splits the text a
+    /// finding prints in the default format into `path`, `line` and `message`.
+    #[test]
+    fn a_finding_is_the_marker_error_as_data() {
+        let error = markers::MarkerError {
+            path: "src/a:b.rs".to_string(),
+            line: 12,
+            message: "needs a \"reason\"".to_string(),
+        };
+        assert_eq!(
+            serde_json::to_string(&Finding::new(&error)).unwrap(),
+            r#"{"level":"error","kind":"marker-finding","path":"src/a:b.rs","line":12,"message":"needs a \"reason\""}"#
+        );
+        assert_eq!(error.to_string(), "src/a:b.rs:12: needs a \"reason\"");
+    }
 
     fn globs(patterns: &[&str]) -> GlobSet {
         let patterns: Vec<String> = patterns.iter().map(ToString::to_string).collect();

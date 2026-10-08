@@ -6,10 +6,11 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use clap::Parser;
 use git2::Repository;
+use serde::Serialize;
 
 use super::diff::{anchor, read_report, ReportFormat};
 use super::exit::{Classify, ExitKind};
-use super::warn::{warn, Warning};
+use super::warn::{emit, warn, Warning};
 use crate::merge::check_shard;
 use crate::render::pct;
 use crate::{lcov, CoverageReport};
@@ -93,6 +94,38 @@ pub struct MergeOutcome {
     pub warnings: Vec<Warning>,
 }
 
+/// The JSON object for the summary line, with its fields in the documented order
+/// (`docs/reference.md#findings-and-summary`).
+#[derive(Debug, Serialize, PartialEq)]
+struct MergeSummary<'a> {
+    level: &'static str,
+    kind: &'static str,
+    message: &'a str,
+    inputs: usize,
+    output: String,
+    files: usize,
+    total_lines: u64,
+    covered_lines: u64,
+    /// Not rounded, unlike the text; `None` when there are no executable lines.
+    percent: Option<f64>,
+}
+
+impl<'a> MergeSummary<'a> {
+    fn new(outcome: &MergeOutcome, message: &'a str) -> Self {
+        Self {
+            level: "info",
+            kind: "merge-summary",
+            message,
+            inputs: outcome.inputs,
+            output: outcome.output.display().to_string(),
+            files: outcome.files,
+            total_lines: outcome.total_lines,
+            covered_lines: outcome.covered_lines,
+            percent: outcome.percent,
+        }
+    }
+}
+
 impl MergeCommand {
     /// Executes the command: merges, writes the file, and reports on stderr.
     ///
@@ -103,7 +136,7 @@ impl MergeCommand {
         for warning in &outcome.warnings {
             warn(warning);
         }
-        eprintln!(
+        let text = format!(
             "merged {} report(s) into {}: {} file(s), {} of {} lines covered ({})",
             outcome.inputs,
             outcome.output.display(),
@@ -113,6 +146,8 @@ impl MergeCommand {
             // The same rounding `patchcov diff` prints its total with.
             pct(outcome.percent),
         );
+        let summary = MergeSummary::new(&outcome, &text);
+        emit(&text, &summary);
         Ok(())
     }
 
@@ -279,6 +314,37 @@ mod tests {
     use git2::Signature;
     use std::fs;
     use tempfile::TempDir;
+
+    fn outcome(percent: Option<f64>) -> MergeOutcome {
+        MergeOutcome {
+            output: PathBuf::from("out/merged.lcov"),
+            inputs: 3,
+            files: 2,
+            total_lines: 6,
+            covered_lines: 4,
+            percent,
+            warnings: Vec::new(),
+        }
+    }
+
+    /// The summary object has the documented fields in order, and the percentage
+    /// is the measured value, not the rounded one the message shows.
+    #[test]
+    fn the_summary_object_carries_the_counts() {
+        let summary = MergeSummary::new(&outcome(Some(200.0 / 3.0)), "merged 3 report(s)");
+        assert_eq!(
+            serde_json::to_string(&summary).unwrap(),
+            r#"{"level":"info","kind":"merge-summary","message":"merged 3 report(s)","inputs":3,"output":"out/merged.lcov","files":2,"total_lines":6,"covered_lines":4,"percent":66.66666666666667}"#
+        );
+    }
+
+    /// A report with no executable lines has no percentage to give.
+    #[test]
+    fn the_summary_percent_is_null_without_executable_lines() {
+        let summary = MergeSummary::new(&outcome(None), "m");
+        let json = serde_json::to_value(&summary).unwrap();
+        assert!(json["percent"].is_null(), "{json}");
+    }
 
     /// A repository whose second commit adds `b.rs`: the shape `patchcov diff`
     /// is run against. Returns the dir, git2's canonical workdir (on macOS the

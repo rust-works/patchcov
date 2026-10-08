@@ -344,3 +344,82 @@ fn malformed_config_and_invalid_config_glob_are_errors() {
     // Explicit paths never read the config, so a broken one cannot block them.
     assert!(lint(root, &["a.rs"]).status.success());
 }
+
+/// The lines of stderr, each parsed as JSON.
+fn json_lines(output: &Output) -> Vec<serde_json::Value> {
+    let text = err_text(output);
+    text.lines()
+        .map(|line| serde_json::from_str(line).unwrap_or_else(|err| panic!("{err}: {text}")))
+        .collect()
+}
+
+/// Under `--error-format json` every line is an object with a `level`: one
+/// finding per malformed file, with the location as data, then the failure.
+#[test]
+fn json_findings_carry_path_and_line_and_the_failure_comes_last() {
+    let (_dir, repo) = repo();
+    let root = repo.workdir().unwrap();
+    write(&repo, "a.rs", &marker("ignore reason=\"unclosed\""), true);
+    write(
+        &repo,
+        "src/b.rs",
+        &format!("fn b() {{}}\n{}", marker("ignore-line reason=\"unclosed")),
+        true,
+    );
+
+    let output = lint_with(root, &["--error-format", "json"], &[]);
+    assert_eq!(output.status.code(), Some(4), "{}", err_text(&output));
+    let lines = json_lines(&output);
+    assert_eq!(lines.len(), 3, "{lines:?}");
+    assert!(
+        lines.iter().all(|line| line["level"] == "error"),
+        "{lines:?}"
+    );
+
+    let finding = |path: &str, line: u32, start: &str| {
+        let found = lines
+            .iter()
+            .find(|l| l["kind"] == "marker-finding" && l["path"] == path)
+            .unwrap_or_else(|| panic!("no finding for {path}: {lines:?}"));
+        assert_eq!(found["line"], line, "{found}");
+        let message = found["message"].as_str().unwrap();
+        assert!(message.starts_with(start), "{message}");
+        assert!(
+            !message.contains(path),
+            "the location is not repeated: {message}"
+        );
+        assert!(found.get("code").is_none(), "only the failure has a code");
+    };
+    finding("a.rs", 1, "unterminated `");
+    finding("src/b.rs", 2, "unterminated `reason=");
+
+    let failure = lines.last().unwrap();
+    assert_eq!(failure["kind"], "marker", "{failure}");
+    assert_eq!(failure["code"], 4, "{failure}");
+}
+
+/// The text format is the `path:line: message` lines and the `Error:` line, as
+/// before.
+#[test]
+fn text_findings_are_unchanged() {
+    let (_dir, repo) = repo();
+    let root = repo.workdir().unwrap();
+    write(&repo, "a.rs", &marker("ignore reason=\"unclosed\""), true);
+
+    let output = lint(root, &[]);
+    let text = err_text(&output);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 2, "{text}");
+    assert!(lines[0].starts_with("a.rs:1: unterminated `"), "{text}");
+    assert_eq!(lines[1], "Error: coverage marker lint failed");
+}
+
+#[test]
+fn a_clean_json_run_prints_nothing() {
+    let (_dir, repo) = repo();
+    let root = repo.workdir().unwrap();
+    write(&repo, "a.rs", "fn a() {}\n", true);
+    let output = lint_with(root, &["--error-format", "json"], &[]);
+    assert!(output.status.success());
+    assert_eq!(err_text(&output), "");
+}
