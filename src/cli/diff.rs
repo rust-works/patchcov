@@ -26,19 +26,25 @@ use crate::{
 /// `patchcov diff` settings, unioned with the CLI flags. Missing ⇒ no-op.
 const COVERAGE_CONFIG_FILE: &str = "config.yaml";
 
-/// Parses a `--fail-under-*` threshold, which must be a finite number.
+/// Parses a `--fail-under-*` threshold, which must be a finite number of at
+/// least `0`.
 ///
-/// `nan` would make the gate never fail (`p < NaN` is always false), and `inf`
-/// has no JSON representation. A range is not enforced: `150` is a valid
-/// "always fail" threshold.
+/// `nan` would make the gate never fail (`p < NaN` is always false), `inf` has
+/// no JSON representation, and a negative threshold can never be undercut, so
+/// it would disable the gate just as silently. There is no upper bound: `150`
+/// is a valid "always fail" threshold.
 fn finite_percentage(value: &str) -> std::result::Result<f64, String> {
     let pct: f64 = value
         .parse()
         .map_err(|e: std::num::ParseFloatError| e.to_string())?;
-    if pct.is_finite() {
-        Ok(pct)
-    } else {
+    if !pct.is_finite() {
         Err("must be a finite number (not NaN or infinity)".to_owned())
+    } else if pct < 0.0 {
+        Err("must not be negative (a negative threshold can never fail)".to_owned())
+    } else {
+        // `-0` parses as `-0.0`; adding `0.0` turns it into `0.0` so it is not
+        // printed as `-0.00%`.
+        Ok(pct + 0.0)
     }
 }
 
@@ -157,7 +163,7 @@ pub struct DiffCommand {
     pub format: Option<OutputFormatArg>,
 
     /// Fail (non-zero exit) when patch coverage is below this percentage.
-    #[arg(long, value_name = "PCT", value_parser = finite_percentage)]
+    #[arg(long, value_name = "PCT", value_parser = finite_percentage, allow_hyphen_values = true)]
     pub fail_under_patch: Option<f64>,
 
     /// Fail when a touched file absent from every report matches this repo-relative glob.
@@ -174,7 +180,7 @@ pub struct DiffCommand {
     /// `cargo llvm-cov report --summary-only`. A report with no executable lines
     /// fails the gate: there is nothing to measure, and passing would let an
     /// empty report slip through.
-    #[arg(long, value_name = "PCT", value_parser = finite_percentage)]
+    #[arg(long, value_name = "PCT", value_parser = finite_percentage, allow_hyphen_values = true)]
     pub fail_under_lines: Option<f64>,
 
     /// Warn, instead of failing, when a nonempty head, shard or baseline report
@@ -1688,29 +1694,80 @@ mod tests {
     }
 
     #[test]
-    fn thresholds_must_be_finite_numbers() {
+    fn thresholds_must_be_finite_non_negative_numbers() {
         use clap::Parser;
         for flag in ["--fail-under-patch", "--fail-under-lines"] {
-            // `--flag=value`, so a leading `-` reaches the value parser instead of
-            // being read by clap as another flag.
-            for bad in ["nan", "NaN", "inf", "infinity", "-inf", "1e999", "abc"] {
-                let arg = format!("{flag}={bad}");
-                let parsed = DiffCommand::try_parse_from(["diff", "--report", "r.lcov", &arg]);
-                assert!(parsed.is_err(), "{arg} should be rejected");
+            let bad = [
+                "nan", "NaN", "inf", "infinity", "-inf", "1e999", "abc", "-5", "-0.1", "-1e999",
+            ];
+            for bad in bad {
+                // Both spellings must reach the value parser and be refused.
+                let joined = format!("{flag}={bad}");
+                for args in [
+                    vec!["diff", "--report", "r.lcov", &joined],
+                    vec!["diff", "--report", "r.lcov", flag, bad],
+                ] {
+                    let parsed = DiffCommand::try_parse_from(&args);
+                    assert!(parsed.is_err(), "{args:?} should be rejected");
+                }
             }
-            for good in ["0", "80", "99.5", "100", "150"] {
-                let arg = format!("{flag}={good}");
-                let cmd =
-                    DiffCommand::try_parse_from(["diff", "--report", "r.lcov", &arg]).unwrap();
-                let expected = good.parse::<f64>().ok();
-                let got = if flag == "--fail-under-patch" {
-                    cmd.fail_under_patch
-                } else {
-                    cmd.fail_under_lines
-                };
-                assert_eq!(got, expected, "{arg}");
+            for good in ["0", "-0", "80", "99.5", "100", "150"] {
+                let joined = format!("{flag}={good}");
+                for args in [
+                    vec!["diff", "--report", "r.lcov", &joined],
+                    vec!["diff", "--report", "r.lcov", flag, good],
+                ] {
+                    let cmd = DiffCommand::try_parse_from(&args).unwrap();
+                    let expected = good.parse::<f64>().ok().map(|v| v + 0.0);
+                    let got = if flag == "--fail-under-patch" {
+                        cmd.fail_under_patch
+                    } else {
+                        cmd.fail_under_lines
+                    };
+                    assert_eq!(got, expected, "{args:?}");
+                    assert!(got.is_some_and(f64::is_sign_positive), "{args:?}");
+                }
             }
         }
+    }
+
+    #[test]
+    fn negative_threshold_error_says_so_in_both_spellings() {
+        use clap::Parser;
+        for flag in ["--fail-under-patch", "--fail-under-lines"] {
+            let joined = format!("{flag}=-5");
+            for args in [
+                vec!["diff", "--report", "r.lcov", &joined],
+                vec!["diff", "--report", "r.lcov", flag, "-5"],
+            ] {
+                let err = DiffCommand::try_parse_from(&args)
+                    .err()
+                    .unwrap()
+                    .to_string();
+                assert!(err.contains("invalid value '-5'"), "{args:?}: {err}");
+                assert!(err.contains("must not be negative"), "{args:?}: {err}");
+            }
+        }
+    }
+
+    #[test]
+    fn negative_infinity_threshold_reaches_the_value_parser() {
+        use clap::Parser;
+        // Not a "negative number" to clap, so it needs `allow_hyphen_values` to
+        // get the same explanation as the other bad values rather than
+        // `unexpected argument '-i'`.
+        let err = DiffCommand::try_parse_from([
+            "diff",
+            "--report",
+            "r.lcov",
+            "--fail-under-lines",
+            "-inf",
+        ])
+        .err()
+        .unwrap()
+        .to_string();
+        assert!(err.contains("invalid value '-inf'"), "{err}");
+        assert!(err.contains("must be a finite number"), "{err}");
     }
 
     #[test]
