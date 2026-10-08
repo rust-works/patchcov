@@ -117,7 +117,9 @@ pub enum Warning {
         report: String,
         /// How many file paths the report has.
         file_count: usize,
-        /// The first few of its normalized paths, which the message samples.
+        /// The first three of its normalized paths, which the message samples. Every
+        /// path in the report is unmatched, so this is truncated exactly when it is
+        /// shorter than `file_count`.
         unmatched: Vec<String>,
     },
     /// A shard was measured under a different workspace root (`merge`).
