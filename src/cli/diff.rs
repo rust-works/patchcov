@@ -42,7 +42,9 @@ fn finite_percentage(value: &str) -> std::result::Result<f64, String> {
     } else if pct < 0.0 {
         Err("must not be negative (a negative threshold can never fail)".to_owned())
     } else {
-        Ok(pct)
+        // `-0` parses as `-0.0`; adding `0.0` turns it into `0.0` so it is not
+        // printed as `-0.00%`.
+        Ok(pct + 0.0)
     }
 }
 
@@ -1709,20 +1711,21 @@ mod tests {
                     assert!(parsed.is_err(), "{args:?} should be rejected");
                 }
             }
-            for good in ["0", "80", "99.5", "100", "150"] {
+            for good in ["0", "-0", "80", "99.5", "100", "150"] {
                 let joined = format!("{flag}={good}");
                 for args in [
                     vec!["diff", "--report", "r.lcov", &joined],
                     vec!["diff", "--report", "r.lcov", flag, good],
                 ] {
                     let cmd = DiffCommand::try_parse_from(&args).unwrap();
-                    let expected = good.parse::<f64>().ok();
+                    let expected = good.parse::<f64>().ok().map(|v| v + 0.0);
                     let got = if flag == "--fail-under-patch" {
                         cmd.fail_under_patch
                     } else {
                         cmd.fail_under_lines
                     };
                     assert_eq!(got, expected, "{args:?}");
+                    assert!(got.is_some_and(f64::is_sign_positive), "{args:?}");
                 }
             }
         }

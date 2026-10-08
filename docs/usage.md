@@ -392,7 +392,10 @@ Markdown output. The report is written to stdout; warnings and errors go to stde
 
 `--fail-under-patch <PCT>` makes the command exit non-zero when patch coverage is below
 `<PCT>` percent, so it can fail a CI step or a local pre-push check. Without it the
-command only reports and exits zero.
+command only reports and exits zero. `<PCT>` must be a finite number of at least `0`; `nan`,
+`inf` and negative values are usage errors (exit `2`), because a threshold that can never be
+undercut would disable the gate silently. A value above `100`, such as `150`, is allowed and
+always fails.
 
 `--fail-under-lines <PCT>` is the overall counterpart: it exits non-zero when line
 coverage across the whole head report is below `<PCT>` percent. It gates on the same
