@@ -189,7 +189,7 @@ With `--error-format json`, each warning is printed as one JSON line on stderr i
 `warning: ...` line. The text of the message is the same as in the default format.
 
 ```json
-{"level":"warning","kind":"path-mismatch","message":"coverage report head.lcov: none of its 1 file path(s) matches a tracked file in the repository; ..."}
+{"level":"warning","kind":"path-mismatch","message":"coverage report head.lcov: none of its 1 file path(s) matches a tracked file in the repository; ...","report":"head.lcov","file_count":1,"unmatched":["nowhere/else.rs"]}
 ```
 
 | Field | Type | Meaning |
@@ -198,12 +198,24 @@ With `--error-format json`, each warning is printed as one JSON line on stderr i
 | `kind` | string | The class of warning, from the table below; stable like the error `kind` |
 | `message` | string | The warning, as it follows `warning: ` in the default format |
 
-| `kind` | When |
-|--------|------|
-| `deprecated` | A deprecated flag was used (`--format`, `--fail-on-path-mismatch`) |
-| `path-mismatch` | `diff`: a report's paths match no tracked file, and `--allow-path-mismatch` or `diff.allow-path-mismatch` let the run continue |
-| `shard-root` | `merge`: a shard was measured under a different workspace root |
-| `glob-no-match` | `lint-markers`: its globs matched no tracked file, so nothing was checked |
+Each `kind` adds fields after `message`, listed below.
+
+| `kind` | When | Fields besides `level`, `kind` and `message` |
+|--------|------|----------------------------------------------|
+| `deprecated` | A deprecated flag was used (`--format`, `--fail-on-path-mismatch`) | `flag`, the flag with its dashes; `replacement`, what to use instead, or `null` if nothing replaces it |
+| `path-mismatch` | `diff`: a report's paths match no tracked file, and `--allow-path-mismatch` or `diff.allow-path-mismatch` let the run continue | `report`, the report as the message names it; `file_count`, how many file paths it has; `unmatched`, the first three of its normalized paths (the ones the message samples) |
+| `shard-root` | `merge`: a shard was measured under a different workspace root | `shard`, the shard as the message names it; `strip_prefix`, the prefix it was expected under, without a trailing `/`; `absolute_paths`, how many absolute file paths it has, none of them under the prefix |
+| `glob-no-match` | `lint-markers`: its globs matched no tracked file, so nothing was checked | `globs`, the globs; `origin`, where they came from: `"--include"` or `"lint-markers.include"` (the config key) |
+
+Another example, a shard under another root:
+
+```json
+{"level":"warning","kind":"shard-root","message":"coverage shard two.lcov: none of its 1 absolute file path(s) is under `/ci/workspace`, so ...","shard":"two.lcov","strip_prefix":"/ci/workspace","absolute_paths":1}
+```
+
+The fields follow `message` and are the data it is written from, so a wrapper can attach a warning
+to a file or a flag without parsing the message. Consumers should ignore keys they do not know:
+fields and kinds may be added without a change to the existing ones.
 
 To tell the lines apart, read `level`: a warning is `"warning"` and the failure is `"error"`.
 The failure is still the last line of stderr. Other lines are not JSON in either format: the
