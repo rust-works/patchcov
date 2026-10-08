@@ -366,7 +366,7 @@ fn assert_json_error(fx: &Fixture, args: &[&str], code: i32, kind: &str) {
     let object = value.as_object().unwrap();
     assert_eq!(
         object.keys().collect::<Vec<_>>(),
-        ["chain", "code", "kind", "message"],
+        ["chain", "code", "kind", "level", "message"],
         "{args:?}"
     );
     let chain: Vec<&str> = value["chain"]
@@ -619,4 +619,172 @@ fn help_and_version_are_not_errors() {
         assert!(!output.stdout.is_empty(), "{flag}");
         assert!(output.stderr.is_empty(), "{flag}: {}", stderr(&output));
     }
+}
+
+// ── warnings ─────────────────────────────────────────────────────
+
+/// The `warning: ...` lines of a run in the default format, without the prefix.
+fn text_warnings(output: &Output) -> Vec<String> {
+    stderr(output)
+        .lines()
+        .filter_map(|line| line.strip_prefix("warning: "))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The JSON warning objects of a run, which must be the only `warning` lines.
+fn json_warnings(output: &Output) -> Vec<serde_json::Value> {
+    let text = stderr(output);
+    assert!(!text.contains("warning: "), "a text warning: {text}");
+    text.lines()
+        .filter(|line| line.starts_with('{'))
+        .map(|line| serde_json::from_str(line).unwrap_or_else(|err| panic!("{err}: {line}")))
+        .filter(|object: &serde_json::Value| object["level"] == "warning")
+        .collect()
+}
+
+/// Runs `head` and `args` in both formats and checks that the single warning is
+/// the same message, of the given `kind`, and that the run ends as `code` says.
+fn assert_json_warning(fx: &Fixture, head: &[&str], args: &[&str], kind: &str) {
+    let plain = run(fx.root(), head, args);
+    let mut flagged: Vec<&str> = head.to_vec();
+    flagged.extend(["--error-format", "json"]);
+    let json = run(fx.root(), &flagged, args);
+
+    assert_eq!(code(&plain), 0, "{head:?}: {}", stderr(&plain));
+    assert_eq!(code(&json), 0, "{head:?}: {}", stderr(&json));
+    let text = text_warnings(&plain);
+    let objects = json_warnings(&json);
+    assert_eq!(text.len(), 1, "{head:?}: {}", stderr(&plain));
+    assert_eq!(objects.len(), 1, "{head:?}: {}", stderr(&json));
+    assert_eq!(objects[0]["kind"], kind, "{head:?}");
+    assert_eq!(objects[0]["message"], text[0], "{head:?}");
+    assert_eq!(objects[0].as_object().unwrap().len(), 3, "{head:?}");
+}
+
+#[test]
+fn an_allowed_path_mismatch_is_a_json_warning() {
+    let fx = Fixture::new();
+    let report = fx.file(
+        "elsewhere.lcov",
+        "SF:nowhere/else.rs\nDA:1,1\nend_of_record\n",
+    );
+    assert_json_warning(
+        &fx,
+        &["diff", "--base-ref", &fx.base],
+        &["--report", path(&report), "--allow-path-mismatch"],
+        "path-mismatch",
+    );
+}
+
+#[test]
+fn a_deprecated_flag_is_a_json_warning() {
+    let fx = Fixture::new();
+    let report = fx.report();
+    for flag in [&["--format", "markdown"][..], &["--fail-on-path-mismatch"]] {
+        let mut args = vec!["--report", path(&report)];
+        args.extend(flag);
+        assert_json_warning(&fx, &["diff", "--base-ref", &fx.base], &args, "deprecated");
+    }
+}
+
+#[test]
+fn a_shard_under_another_root_is_a_json_warning() {
+    let fx = Fixture::new();
+    let shard = fx.file(
+        "shard.lcov",
+        "SF:/other/runner/a.rs\nDA:1,1\nend_of_record\n",
+    );
+    assert_json_warning(
+        &fx,
+        &[
+            "merge",
+            "--strip-prefix",
+            "/ci/workspace",
+            "-o",
+            "merged.lcov",
+        ],
+        &[path(&shard)],
+        "shard-root",
+    );
+}
+
+#[test]
+fn a_glob_that_matches_nothing_is_a_json_warning() {
+    let fx = Fixture::new();
+    assert_json_warning(
+        &fx,
+        &["lint-markers", "--include", "**/*.nomatch"],
+        &[],
+        "glob-no-match",
+    );
+}
+
+#[test]
+fn the_error_follows_the_warnings_and_is_told_apart_by_level() {
+    let fx = Fixture::new();
+    let measured = fx.report();
+    // Two deprecated flags warn; the gate then fails at 50%.
+    let output = fx.diff(&[
+        "--report",
+        path(&measured),
+        "--format",
+        "markdown",
+        "--fail-on-path-mismatch",
+        "--fail-under-patch",
+        "80",
+        "--error-format",
+        "json",
+    ]);
+    assert_eq!(code(&output), 1, "{}", stderr(&output));
+    let text = stderr(&output);
+    let levels: Vec<_> = text
+        .lines()
+        .map(|line| {
+            let object: serde_json::Value =
+                serde_json::from_str(line).unwrap_or_else(|err| panic!("not JSON ({err}): {line}"));
+            object["level"].clone()
+        })
+        .collect();
+    assert_eq!(levels, ["warning", "warning", "error"], "{text}");
+    let error = report(&output);
+    assert_eq!(error["kind"], "gate");
+}
+
+#[test]
+fn the_environment_variable_turns_warnings_into_json_too() {
+    let fx = Fixture::new();
+    let output = Command::new(env!("CARGO_BIN_EXE_patchcov"))
+        .env_remove("PATCHCOV_CONFIG_DIR")
+        .env("PATCHCOV_ERROR_FORMAT", "json")
+        .env("GIT_CEILING_DIRECTORIES", fx.root().parent().unwrap())
+        .args([
+            "-C",
+            path(fx.root()),
+            "lint-markers",
+            "--include",
+            "*.nomatch",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    assert_eq!(json_warnings(&output).len(), 1, "{}", stderr(&output));
+}
+
+#[test]
+fn an_invalid_format_variable_warns_in_text() {
+    let fx = Fixture::new();
+    let output = Command::new(env!("CARGO_BIN_EXE_patchcov"))
+        .env_remove("PATCHCOV_CONFIG_DIR")
+        .env("PATCHCOV_ERROR_FORMAT", "xml")
+        .env("GIT_CEILING_DIRECTORIES", fx.root().parent().unwrap())
+        .args(["-C", path(fx.root()), "lint-markers"])
+        .output()
+        .unwrap();
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    assert!(
+        stderr(&output).starts_with("warning: ignoring PATCHCOV_ERROR_FORMAT=xml"),
+        "{}",
+        stderr(&output)
+    );
 }

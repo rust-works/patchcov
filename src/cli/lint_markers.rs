@@ -9,6 +9,7 @@ use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 
 use super::diff::load_coverage_config;
 use super::exit::{Classify, ExitKind};
+use super::warn::{warn, WarningKind};
 use crate::config::resolve_config_dir_at;
 use crate::markers;
 
@@ -62,9 +63,12 @@ impl LintMarkersCommand {
             );
             if include.is_some() && selected.is_empty() {
                 // A typo in a glob must not look like a clean scan.
-                eprintln!(
-                    "warning: no tracked file matches the globs in {origin}; \
-                     no coverage markers were checked"
+                warn(
+                    WarningKind::GlobNoMatch,
+                    format!(
+                        "no tracked file matches the globs in {origin}; \
+                         no coverage markers were checked"
+                    ),
                 );
             }
             selected

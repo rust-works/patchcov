@@ -5,6 +5,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 use patchcov::cli::exit::{self, ErrorReport};
+use patchcov::cli::warn;
 use patchcov::cli::{usage_report, Cli, ErrorFormat, ERROR_FORMAT_ENV};
 
 fn main() -> ExitCode {
@@ -25,6 +26,7 @@ fn main() -> ExitCode {
     };
     let (error_format, warning) =
         cli.resolve_error_format(std::env::var_os(ERROR_FORMAT_ENV).as_deref());
+    warn::set_format(error_format);
     if let Some(warning) = warning {
         eprintln!("warning: {warning}");
     }
