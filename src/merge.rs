@@ -62,10 +62,11 @@ pub fn require_executable_lines(label: &str, report: &CoverageReport) -> Result<
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[non_exhaustive]
 pub struct PrefixMismatch {
-    /// The shard, as named in messages (normally its path).
+    /// The shard, as named in messages (normally its path): a display string,
+    /// with U+FFFD for any byte of a non-UTF-8 path, not a path identifier.
     pub shard: String,
     /// The prefix the shard's absolute paths were expected under, without a
-    /// trailing `/`.
+    /// trailing `/`. Lossy in the same way as `shard`.
     pub strip_prefix: String,
     /// How many absolute file paths the shard has, none of them under the prefix.
     pub absolute_paths: usize,
