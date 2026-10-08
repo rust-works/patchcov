@@ -123,15 +123,16 @@ empty variable counts as unset. The values are `text` (the default) and `json`; 
 any other value is ignored with a warning, so a typo cannot stop a run.
 
 With `json`, a failing run prints one object on a single line, as the last line of stderr,
-instead of the `Error:` line. Warnings that patchcov prints earlier are unchanged, and so are
-stdout and the exit code.
+instead of the `Error:` line. Stdout and the exit code are unchanged, and so is each warning's
+message. Warnings printed earlier are JSON lines too, see [Warnings](#warnings) below.
 
 ```json
-{"code":3,"kind":"report","message":"could not read coverage report ./missing.lcov","chain":["No such file or directory (os error 2)"]}
+{"level":"error","code":3,"kind":"report","message":"could not read coverage report ./missing.lcov","chain":["No such file or directory (os error 2)"]}
 ```
 
 | Field | Type | Meaning |
 |-------|------|---------|
+| `level` | string | Always `"error"`; a [warning line](#warnings) has `"warning"` |
 | `code` | number | The process exit code, from the [table above](#exit-codes) |
 | `kind` | string | The name of the class of failure, from the table below; stable like the code |
 | `message` | string | The outermost error message |
@@ -160,6 +161,34 @@ value for `--error-format` itself is a parser error in the default format.
 
 A failed gate is a `gate` object whose `message` names every failed gate, with the threshold and
 the measured value, as in the text; the gates are not separate fields.
+
+### Warnings
+
+With `--error-format json`, each warning is printed as one JSON line on stderr instead of a
+`warning: ...` line. The text of the message is the same as in the default format.
+
+```json
+{"level":"warning","kind":"path-mismatch","message":"coverage report head.lcov: none of its 1 file path(s) matches a tracked file in the repository; ..."}
+```
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `level` | string | Always `"warning"` |
+| `kind` | string | The class of warning, from the table below; stable like the error `kind` |
+| `message` | string | The warning, as it follows `warning: ` in the default format |
+
+| `kind` | When |
+|--------|------|
+| `deprecated` | A deprecated flag was used (`--format`, `--fail-on-path-mismatch`) |
+| `path-mismatch` | `diff`: a report's paths match no tracked file, and `--allow-path-mismatch` or `diff.allow-path-mismatch` let the run continue |
+| `shard-root` | `merge`: a shard was measured under a different workspace root |
+| `glob-no-match` | `lint-markers`: its globs matched no tracked file, so nothing was checked |
+
+To tell the lines apart, read `level`: a warning is `"warning"` and the failure is `"error"`.
+The failure is still the last line of stderr. Other lines are not JSON in either format: the
+findings of `lint-markers` and the summary line of `merge` stay text, so parse only the lines
+that start with `{`. The warning about an invalid `PATCHCOV_ERROR_FORMAT` is also text, since the
+format it asks for was not accepted.
 
 ## Output schema
 
