@@ -2,8 +2,8 @@ name: MSRV (fresh resolution)
 
 # `cargo install patchcov` without `--locked` ignores Cargo.lock and resolves the newest
 # dependencies, which may need a newer rustc than the MSRV. The `msrv` job in ci.yml builds
-# the committed Cargo.lock and cannot see that. This workflow deletes the lockfile, lets the
-# MSRV toolchain's own cargo resolve afresh, and builds what `cargo install` builds.
+# the committed Cargo.lock and cannot see that. This workflow runs the same unlocked install
+# from the checkout on the MSRV toolchain, so that toolchain's own cargo does the resolving.
 #
 # It is deliberately separate from ci.yml and not a required check (see CONTRIBUTING.md): it
 # can go red because a transitive dependency released, not because of a change here, so it
@@ -32,11 +32,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.88.0
-      - name: Resolve dependencies afresh
-        run: rm Cargo.lock
-      # The library and binary only: cargo install never builds dev-dependencies.
-      - name: Check on the MSRV
-        run: cargo check --lib --bins
-      - name: Show what resolved differently from the committed lockfile
-        if: ${{ always() }}
-        run: git --no-pager diff -U1 -- Cargo.lock || true
+      # No --locked: cargo ignores Cargo.lock and prints "Locking N packages to latest
+      # compatible versions", which is the resolution under test.
+      - name: Install without --locked on the MSRV
+        run: cargo install --path . --root "$RUNNER_TEMP/patchcov"

@@ -155,7 +155,7 @@ cargo install patchcov --locked
 
 `--locked` builds with the dependency versions CI tests, on Rust 1.88 or newer. Without it,
 cargo resolves the newest dependencies, and a transitive release may need a newer compiler
-than 1.88; a scheduled CI job watches for that, but only `--locked` is guaranteed.
+than 1.88; a weekly CI job checks for that, but only `--locked` is guaranteed.
 
 Prebuilt binaries for Linux (glibc 2.35 or newer; x86_64 and aarch64), macOS (Apple silicon
 and Intel) and Windows (x86_64 MSVC) are attached to each

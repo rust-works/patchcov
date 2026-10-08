@@ -87,12 +87,11 @@ Install the MSRV toolchain with `rustup toolchain install 1.88.0 --profile minim
 CI also runs tests on Linux, macOS, and Windows.
 
 The scheduled [MSRV (fresh resolution)](.github/workflows/msrv-fresh.yml) workflow checks what
-`cargo install patchcov` without `--locked` would build: it deletes `Cargo.lock`, lets the MSRV
-toolchain resolve the newest dependencies, and runs `cargo check --lib --bins`. To reproduce it,
-run this in a scratch checkout, since it deletes your lockfile:
+`cargo install patchcov` without `--locked` would build. It runs the unlocked install on the MSRV
+toolchain, so cargo ignores `Cargo.lock` and resolves the newest dependencies. To reproduce it:
 
 ```bash
-rm Cargo.lock && cargo +1.88.0 check --lib --bins
+cargo +1.88.0 install --path . --root "$(mktemp -d)"
 ```
 
 It can go red when a transitive dependency raises its MSRV, so it runs weekly and is not a
