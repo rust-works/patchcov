@@ -338,6 +338,39 @@ mod tests {
         );
     }
 
+    /// The fields, and their order, are what `docs/reference.md` says: the table
+    /// and the example line both. They do not depend on the percentage.
+    #[test]
+    fn the_summary_has_the_fields_the_docs_list() {
+        use crate::cli::doc_fields::{example_keys, json_keys, reference_section, table_fields};
+        let section = reference_section("Findings and summary");
+        let documented = table_fields(section, "merge-summary");
+        for percent in [Some(50.0), None] {
+            let line = serde_json::to_string(&MergeSummary::new(&outcome(percent), "m")).unwrap();
+            let keys = json_keys(&line);
+            assert_eq!(
+                keys,
+                [
+                    "level",
+                    "kind",
+                    "message",
+                    "inputs",
+                    "output",
+                    "files",
+                    "total_lines",
+                    "covered_lines",
+                    "percent"
+                ]
+            );
+            assert_eq!(documented, keys, "the docs table");
+        }
+        assert_eq!(
+            example_keys(section, "merge-summary"),
+            Some(documented),
+            "the docs example"
+        );
+    }
+
     /// A report with no executable lines has no percentage to give.
     #[test]
     fn the_summary_percent_is_null_without_executable_lines() {
