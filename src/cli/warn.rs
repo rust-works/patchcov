@@ -437,9 +437,12 @@ mod tests {
             glob_no_match(GlobOrigin::ConfigInclude),
         ];
         let documented = kind_rows(section);
+        // The docs may order their rows as they like.
         let mut kinds: Vec<_> = warnings.iter().map(Warning::kind).collect();
+        kinds.sort_unstable();
         kinds.dedup();
-        let listed: Vec<_> = documented.iter().map(|(kind, _)| kind.as_str()).collect();
+        let mut listed: Vec<_> = documented.iter().map(|(kind, _)| kind.as_str()).collect();
+        listed.sort_unstable();
         assert_eq!(listed, kinds, "the kinds in the docs table");
 
         let mut examples = 0;

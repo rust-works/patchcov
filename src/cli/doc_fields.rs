@@ -44,7 +44,7 @@ impl<'de> Deserialize<'de> for Keys {
 }
 
 /// The keys of the JSON object `line`, in order.
-pub fn json_keys(line: &str) -> Vec<String> {
+pub(super) fn json_keys(line: &str) -> Vec<String> {
     match serde_json::from_str::<Keys>(line) {
         Ok(Keys(keys)) => keys,
         Err(error) => panic!("not a JSON object ({error}): {line}"),
@@ -53,7 +53,7 @@ pub fn json_keys(line: &str) -> Vec<String> {
 
 /// The body of the section headed `heading` (any level), up to the next heading of
 /// the same or a higher level.
-pub fn section<'a>(markdown: &'a str, heading: &str) -> &'a str {
+pub(super) fn section<'a>(markdown: &'a str, heading: &str) -> &'a str {
     let mut level = 0;
     let mut start = None;
     let mut in_fence = false;
@@ -82,7 +82,7 @@ pub fn section<'a>(markdown: &'a str, heading: &str) -> &'a str {
 }
 
 /// A section of `docs/reference.md`.
-pub fn reference_section(heading: &str) -> &'static str {
+pub(super) fn reference_section(heading: &str) -> &'static str {
     section(REFERENCE, heading)
 }
 
@@ -131,7 +131,7 @@ fn first_code(text: &str) -> Option<&str> {
 
 /// The field names of the table in `section` that documents the line whose `kind`
 /// is `kind`: the one with a `kind` row that says `"<kind>"`.
-pub fn table_fields(section: &str, kind: &str) -> Vec<String> {
+pub(super) fn table_fields(section: &str, kind: &str) -> Vec<String> {
     let quoted = format!("\"{kind}\"");
     let found = tables(section).into_iter().find(|(_, rows)| {
         rows.iter()
@@ -144,7 +144,7 @@ pub fn table_fields(section: &str, kind: &str) -> Vec<String> {
 }
 
 /// The field names in the first column of the first table of `section`.
-pub fn first_table_fields(section: &str) -> Vec<String> {
+pub(super) fn first_table_fields(section: &str) -> Vec<String> {
     match tables(section).into_iter().next() {
         Some((_, rows)) => rows.iter().map(|row| unticked(row[0]).to_owned()).collect(),
         None => panic!("no table in the section"),
@@ -154,7 +154,7 @@ pub fn first_table_fields(section: &str) -> Vec<String> {
 /// The kinds the table headed `kind` in `section` lists, with the fields each
 /// adds, read from the last cell: the first backticked name of each
 /// `;`-separated clause.
-pub fn kind_rows(section: &str) -> Vec<(String, Vec<String>)> {
+pub(super) fn kind_rows(section: &str) -> Vec<(String, Vec<String>)> {
     let Some((_, rows)) = tables(section)
         .into_iter()
         .find(|(header, _)| header.first().is_some_and(|h| unticked(h) == "kind"))
@@ -163,6 +163,10 @@ pub fn kind_rows(section: &str) -> Vec<(String, Vec<String>)> {
     };
     rows.iter()
         .map(|row| {
+            assert!(
+                row.len() == 3,
+                "a `kind` table row without 3 cells: {row:?}"
+            );
             let fields = row[2]
                 .split(';')
                 .map(|clause| {
@@ -177,21 +181,23 @@ pub fn kind_rows(section: &str) -> Vec<(String, Vec<String>)> {
 }
 
 /// The keys of the single-line `json` example in `section` whose `kind` is `kind`,
-/// if the section has one.
-pub fn example_keys(section: &str, kind: &str) -> Option<Vec<String>> {
-    let marker = format!("\"kind\":\"{kind}\"");
+/// if the section has one. A line that is not a JSON object is not an example.
+pub(super) fn example_keys(section: &str, kind: &str) -> Option<Vec<String>> {
     let mut in_json = false;
     for line in section.lines() {
         if line.starts_with("```") {
             in_json = !in_json && line.trim_end() == "```json";
-        } else if in_json && line.contains(&marker) {
-            return Some(json_keys(line));
+        } else if in_json && line.starts_with('{') {
+            let value: serde_json::Value = serde_json::from_str(line)
+                .unwrap_or_else(|error| panic!("a `json` example is not JSON ({error}): {line}"));
+            if value["kind"] == kind {
+                return Some(json_keys(line));
+            }
         }
     }
     None
 }
 
-#[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
