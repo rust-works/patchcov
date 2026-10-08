@@ -9,7 +9,7 @@ use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 
 use super::diff::load_coverage_config;
 use super::exit::{Classify, ExitKind};
-use super::warn::{warn, WarningKind};
+use super::warn::{warn, GlobOrigin, Warning};
 use crate::config::resolve_config_dir_at;
 use crate::markers;
 
@@ -49,27 +49,21 @@ impl LintMarkersCommand {
         let tracked = self.paths.is_empty();
         let paths = if tracked {
             let (patterns, origin) = if self.include.is_empty() {
-                (
-                    load_config_include(root)?,
-                    "lint-markers.include in config.yaml",
-                )
+                (load_config_include(root)?, GlobOrigin::ConfigInclude)
             } else {
-                (self.include, "--include")
+                (self.include, GlobOrigin::IncludeFlag)
             };
-            let include = compile_include(&patterns, origin)?;
+            let include = compile_include(&patterns, origin.described())?;
             let selected = select_tracked(
                 tracked_paths(&repo).classify(ExitKind::Git)?,
                 include.as_ref(),
             );
             if include.is_some() && selected.is_empty() {
                 // A typo in a glob must not look like a clean scan.
-                warn(
-                    WarningKind::GlobNoMatch,
-                    format!(
-                        "no tracked file matches the globs in {origin}; \
-                         no coverage markers were checked"
-                    ),
-                );
+                warn(&Warning::GlobNoMatch {
+                    globs: patterns,
+                    origin,
+                });
             }
             selected
         } else {

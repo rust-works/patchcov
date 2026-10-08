@@ -9,7 +9,7 @@ use git2::Repository;
 
 use super::diff::{anchor, read_report, ReportFormat};
 use super::exit::{Classify, ExitKind};
-use super::warn::{warn, WarningKind};
+use super::warn::{warn, Warning};
 use crate::merge::check_shard;
 use crate::render::pct;
 use crate::{lcov, CoverageReport};
@@ -90,7 +90,7 @@ pub struct MergeOutcome {
     /// Non-fatal problems found while loading the reports (for example a shard
     /// measured under a different workspace root). [`MergeCommand::execute`]
     /// prints them to stderr.
-    pub warnings: Vec<String>,
+    pub warnings: Vec<Warning>,
 }
 
 impl MergeCommand {
@@ -101,7 +101,7 @@ impl MergeCommand {
     pub fn execute(self, repo: Option<&Path>) -> Result<()> {
         let outcome = self.run(repo)?;
         for warning in &outcome.warnings {
-            warn(WarningKind::ShardRoot, warning);
+            warn(warning);
         }
         eprintln!(
             "merged {} report(s) into {}: {} file(s), {} of {} lines covered ({})",
@@ -142,7 +142,7 @@ impl MergeCommand {
             None => repo_workdir(repo_root.unwrap_or_else(|| Path::new(".")))?,
         };
 
-        let mut warnings = Vec::new();
+        let mut mismatches = Vec::new();
         let mut merged = CoverageReport::new();
         // `go.mod` is looked up where the default strip prefix is: the repository's
         // working directory, so running from a subdirectory finds the root's.
@@ -160,7 +160,7 @@ impl MergeCommand {
                 &path.display().to_string(),
                 &report,
                 prefix.as_deref(),
-                &mut warnings,
+                &mut mismatches,
             )
             .classify(ExitKind::Report)?;
             if let Some(prefix) = prefix.as_deref() {
@@ -180,7 +180,7 @@ impl MergeCommand {
             total_lines: merged.total_lines(),
             covered_lines: merged.covered_lines(),
             percent: merged.percent(),
-            warnings,
+            warnings: mismatches.into_iter().map(Warning::ShardRoot).collect(),
         })
     }
 }
@@ -857,7 +857,11 @@ mod tests {
             .unwrap();
 
         assert_eq!(outcome.warnings.len(), 1, "{:?}", outcome.warnings);
-        assert!(outcome.warnings[0].contains("two.lcov"));
+        let Warning::ShardRoot(mismatch) = &outcome.warnings[0] else {
+            panic!("{:?}", outcome.warnings[0]);
+        };
+        assert!(mismatch.shard.ends_with("two.lcov"), "{mismatch:?}");
+        assert!(outcome.warnings[0].to_string().contains("two.lcov"));
         assert!(fs::read_to_string(&out).unwrap().contains("SF:a.rs\n"));
     }
 

@@ -5,9 +5,11 @@
 //! measured under a different workspace root, would otherwise lower the merged
 //! coverage — or simply not line up with the diff — without anyone noticing.
 
+use std::fmt;
 use std::path::Path;
 
 use anyhow::{bail, Result};
+use serde::Serialize;
 
 use super::model::CoverageReport;
 
@@ -22,7 +24,7 @@ pub fn check_shard(
     label: &str,
     report: &CoverageReport,
     prefix: Option<&Path>,
-    warnings: &mut Vec<String>,
+    warnings: &mut Vec<PrefixMismatch>,
 ) -> Result<()> {
     require_executable_lines(label, report)?;
     if let Some(prefix) = prefix {
@@ -51,6 +53,36 @@ pub fn require_executable_lines(label: &str, report: &CoverageReport) -> Result<
     Ok(())
 }
 
+/// A shard measured under a different workspace root, found by
+/// [`prefix_mismatch`].
+///
+/// Its [`Display`](fmt::Display) is the warning `patchcov` prints; the fields are
+/// what `--error-format json` adds to that warning, see
+/// `docs/reference.md#warnings`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PrefixMismatch {
+    /// The shard, as named in messages (normally its path).
+    pub shard: String,
+    /// The prefix the shard's absolute paths were expected under, without a
+    /// trailing `/`.
+    pub strip_prefix: String,
+    /// How many absolute file paths the shard has, none of them under the prefix.
+    pub absolute_paths: usize,
+}
+
+impl fmt::Display for PrefixMismatch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "coverage shard {}: none of its {} absolute file path(s) is under \
+             `{}`, so it was probably measured under a different workspace root and its \
+             files will not line up with the other shards or the diff; pass --strip-prefix \
+             with that root, or run every shard under the same one",
+            self.shard, self.absolute_paths, self.strip_prefix
+        )
+    }
+}
+
 /// Describes a shard measured under a different workspace root, or `None` when
 /// it looks fine.
 ///
@@ -65,9 +97,14 @@ pub fn require_executable_lines(label: &str, report: &CoverageReport) -> Result<
 /// legitimately name a few out-of-tree files (the standard library, vendored
 /// sources). Call this on the freshly parsed report, **before** the prefix is
 /// stripped.
-pub fn prefix_mismatch(label: &str, report: &CoverageReport, prefix: &Path) -> Option<String> {
+pub fn prefix_mismatch(
+    label: &str,
+    report: &CoverageReport,
+    prefix: &Path,
+) -> Option<PrefixMismatch> {
     let prefix = prefix.to_string_lossy();
-    let prefix_slash = format!("{}/", prefix.trim_end_matches('/'));
+    let prefix = prefix.trim_end_matches('/');
+    let prefix_slash = format!("{prefix}/");
     let mut absolute = 0_usize;
     for path in report.files.keys() {
         if path.starts_with(&prefix_slash) {
@@ -77,14 +114,10 @@ pub fn prefix_mismatch(label: &str, report: &CoverageReport, prefix: &Path) -> O
             absolute += 1;
         }
     }
-    (absolute > 0).then(|| {
-        format!(
-            "coverage shard {label}: none of its {absolute} absolute file path(s) is under \
-             `{}`, so it was probably measured under a different workspace root and its \
-             files will not line up with the other shards or the diff; pass --strip-prefix \
-             with that root, or run every shard under the same one",
-            prefix.trim_end_matches('/')
-        )
+    (absolute > 0).then(|| PrefixMismatch {
+        shard: label.to_owned(),
+        strip_prefix: prefix.to_owned(),
+        absolute_paths: absolute,
     })
 }
 
@@ -152,8 +185,17 @@ mod tests {
             ("/Users/dev/work/repo/src/a.rs", &[(1, 1)]),
             ("/Users/dev/work/repo/src/b.rs", &[(1, 1)]),
         ]);
-        let message =
+        let mismatch =
             prefix_mismatch("shard-2.lcov", &report, Path::new("/home/runner/work/repo")).unwrap();
+        assert_eq!(
+            mismatch,
+            PrefixMismatch {
+                shard: "shard-2.lcov".to_owned(),
+                strip_prefix: "/home/runner/work/repo".to_owned(),
+                absolute_paths: 2,
+            }
+        );
+        let message = mismatch.to_string();
         assert!(message.contains("shard-2.lcov"), "{message}");
         assert!(message.contains("2 absolute file path(s)"), "{message}");
         assert!(message.contains("`/home/runner/work/repo`"), "{message}");
@@ -198,5 +240,9 @@ mod tests {
             prefix_mismatch("s", &report, Path::new("/work/repo/")),
             None
         );
+        // The reported prefix has no trailing slash either.
+        let mismatch = prefix_mismatch("s", &report, Path::new("/home/ci/")).unwrap();
+        assert_eq!(mismatch.strip_prefix, "/home/ci");
+        assert!(mismatch.to_string().contains("under `/home/ci`,"));
     }
 }
