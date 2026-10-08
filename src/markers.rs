@@ -36,8 +36,7 @@
 //! string literal is therefore matched too — accepted, and documented.
 
 use std::collections::BTreeSet;
-
-use anyhow::{bail, Result};
+use std::fmt;
 
 /// The literal that introduces every marker.
 ///
@@ -127,6 +126,40 @@ impl FileMarkers {
     }
 }
 
+/// One malformed marker: where it is and what is wrong with it.
+///
+/// Displays as `path:line: message`, the line `patchcov lint-markers` prints in the
+/// default format; the parts are fields so `--error-format json` can print them as data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct MarkerError {
+    /// The file the marker is in, as passed to [`scan`].
+    pub path: String,
+    /// The 1-based line of the marker (of the opening marker, for an unterminated region).
+    pub line: u32,
+    /// What is wrong, without the `path:line: ` prefix.
+    pub message: String,
+}
+
+impl fmt::Display for MarkerError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}: {}", self.path, self.line, self.message)
+    }
+}
+
+impl std::error::Error for MarkerError {}
+
+/// Returns a [`MarkerError`] at `path:line` with a formatted message.
+macro_rules! fail {
+    ($path:expr, $line:expr, $($message:tt)+) => {
+        return Err(MarkerError {
+            path: $path.to_string(),
+            line: $line,
+            message: format!($($message)+),
+        })
+    };
+}
+
 /// A marker keyword, its kind, and whether it is the single-line form. Ordered
 /// longest-first so `ignore-line` is never read as `ignore` plus trailing junk.
 const KEYWORDS: &[(&str, MarkerKind, bool)] = &[
@@ -149,7 +182,7 @@ struct Open {
 /// error naming `path:line` rather than a silent skip: a marker that does not
 /// take effect is worse than one that does not exist, because its author
 /// believes the noise is silenced.
-pub fn scan(path: &str, text: &str) -> Result<Vec<Region>> {
+pub fn scan(path: &str, text: &str) -> Result<Vec<Region>, MarkerError> {
     // A file with no introducer cannot produce a region *or* an error, so this
     // short-circuit changes nothing but the cost of the common case.
     if !text.contains(INTRODUCER) {
@@ -168,13 +201,19 @@ pub fn scan(path: &str, text: &str) -> Result<Vec<Region>> {
 
         if let Some(tail) = strip_keyword(rest, "end") {
             if !tail.trim().is_empty() {
-                bail!(
-                    "{path}:{line}: unexpected text after `{INTRODUCER} end`: `{}`",
+                fail!(
+                    path,
+                    line,
+                    "unexpected text after `{INTRODUCER} end`: `{}`",
                     tail.trim()
                 );
             }
             let Some(open) = open.take() else {
-                bail!("{path}:{line}: `{INTRODUCER} end` without a matching region start");
+                fail!(
+                    path,
+                    line,
+                    "`{INTRODUCER} end` without a matching region start"
+                );
             };
             regions.push(Region {
                 kind: open.kind,
@@ -190,8 +229,10 @@ pub fn scan(path: &str, text: &str) -> Result<Vec<Region>> {
             .find(|(keyword, _, _)| strip_keyword(rest, keyword).is_some())
             .copied()
         else {
-            bail!(
-                "{path}:{line}: unrecognised coverage marker `{INTRODUCER} {}` \
+            fail!(
+                path,
+                line,
+                "unrecognised coverage marker `{INTRODUCER} {}` \
                  (expected `ignore`, `tolerate`, `ignore-line`, `tolerate-line`, or `end`)",
                 rest.split_whitespace().next().unwrap_or("")
             );
@@ -211,8 +252,10 @@ pub fn scan(path: &str, text: &str) -> Result<Vec<Region>> {
         }
 
         if let Some(previous) = &open {
-            bail!(
-                "{path}:{line}: nested coverage region; the `{}` region opened at line {} is \
+            fail!(
+                path,
+                line,
+                "nested coverage region; the `{}` region opened at line {} is \
                  still open (regions may not overlap)",
                 previous.kind.as_str(),
                 previous.start
@@ -226,9 +269,10 @@ pub fn scan(path: &str, text: &str) -> Result<Vec<Region>> {
     }
 
     if let Some(open) = open {
-        bail!(
-            "{path}:{}: unterminated `{INTRODUCER} {}` region (add `{INTRODUCER} end`)",
+        fail!(
+            path,
             open.start,
+            "unterminated `{INTRODUCER} {}` region (add `{INTRODUCER} end`)",
             open.kind.as_str()
         );
     }
@@ -253,20 +297,30 @@ fn strip_keyword<'a>(rest: &'a str, keyword: &str) -> Option<&'a str> {
 /// The reason is required because silencing must be explained at the site: a
 /// bare marker tells a later reader nothing about whether the noise it hides is
 /// still real.
-fn parse_reason(path: &str, line: u32, keyword: &str, tail: &str) -> Result<String> {
+fn parse_reason(path: &str, line: u32, keyword: &str, tail: &str) -> Result<String, MarkerError> {
     let tail = tail.trim();
     let Some(after) = tail.split_once("reason=\"").map(|(_, after)| after) else {
-        bail!(
-            "{path}:{line}: `{INTRODUCER} {keyword}` needs a reason \
+        fail!(
+            path,
+            line,
+            "`{INTRODUCER} {keyword}` needs a reason \
              (write `{INTRODUCER} {keyword} reason=\"why this is silenced\"`)"
         );
     };
     let Some((reason, _)) = after.split_once('"') else {
-        bail!("{path}:{line}: unterminated `reason=\"…\"` (missing closing quote)");
+        fail!(
+            path,
+            line,
+            "unterminated `reason=\"…\"` (missing closing quote)"
+        );
     };
     let reason = reason.trim();
     if reason.is_empty() {
-        bail!("{path}:{line}: `reason=\"\"` is empty; explain why the region is silenced");
+        fail!(
+            path,
+            line,
+            "`reason=\"\"` is empty; explain why the region is silenced"
+        );
     }
     Ok(reason.to_string())
 }
@@ -301,6 +355,33 @@ mod tests {
     /// Scans and returns the error message, for the cases that must fail.
     fn err(text: &str) -> String {
         scan("src/a.rs", text).unwrap_err().to_string()
+    }
+
+    /// The error is the location as data and the text as it always was.
+    #[test]
+    fn an_error_names_its_location_as_fields() {
+        let text = file(&[
+            "fn a() {}".to_string(),
+            rs("ignore-line"),
+            rs("tolerate reason=\"open\""),
+        ]);
+        let error = scan("src/a.rs", &text).unwrap_err();
+        assert_eq!(error.path, "src/a.rs");
+        assert_eq!(error.line, 2);
+        assert!(error
+            .message
+            .starts_with(&format!("`{INTRODUCER} ignore-line` needs")));
+        assert_eq!(error.to_string(), format!("src/a.rs:2: {}", error.message));
+    }
+
+    /// An unterminated region is located at the line that opened it, not at the
+    /// end of the file.
+    #[test]
+    fn an_unterminated_region_is_located_at_its_opening_line() {
+        let text = file(&["x".to_string(), "y".to_string(), rs("ignore reason=\"r\"")]);
+        let error = scan("a.rs", &text).unwrap_err();
+        assert_eq!(error.line, 3);
+        assert!(error.message.starts_with("unterminated"), "{error}");
     }
 
     fn region(kind: MarkerKind, start: u32, end: u32, reason: &str) -> Region {

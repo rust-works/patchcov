@@ -77,7 +77,7 @@ pub use analysis::{
 };
 pub use diff::{default_base_ref, DiffModel};
 pub use format::{parse, Format};
-pub use markers::{FileMarkers, MarkerKind, Region};
+pub use markers::{FileMarkers, MarkerError, MarkerKind, Region};
 pub use model::{CoverageReport, FileCoverage};
 pub use paths::PathMapping;
 pub use render::{render, OutputFormat, RenderOptions};

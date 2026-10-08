@@ -124,7 +124,8 @@ any other value is ignored with a warning, so a typo cannot stop a run.
 
 With `json`, a failing run prints one object on a single line, as the last line of stderr,
 instead of the `Error:` line. Stdout and the exit code are unchanged, and so is each warning's
-message. Warnings printed earlier are JSON lines too, see [Warnings](#warnings) below.
+message. Lines printed earlier are JSON lines too, see [Warnings](#warnings) and
+[Findings and summary](#findings-and-summary) below.
 
 ```json
 {"level":"error","code":3,"kind":"report","message":"could not read coverage report ./missing.lcov","chain":["No such file or directory (os error 2)"]}
@@ -132,7 +133,7 @@ message. Warnings printed earlier are JSON lines too, see [Warnings](#warnings) 
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `level` | string | Always `"error"`; a [warning line](#warnings) has `"warning"` |
+| `level` | string | Always `"error"`; a [warning line](#warnings) has `"warning"`, and the other [lines](#findings-and-summary) have `"error"` (a finding) or `"info"` |
 | `code` | number | The process exit code, from the [table above](#exit-codes) |
 | `kind` | string | The name of the class of failure, from the table below; stable like the code |
 | `message` | string | The outermost error message |
@@ -217,11 +218,52 @@ The fields follow `message` and are the data it is written from, so a wrapper ca
 to a file or a flag without parsing the message. Consumers should ignore keys they do not know:
 fields and kinds may be added without a change to the existing ones.
 
-To tell the lines apart, read `level`: a warning is `"warning"` and the failure is `"error"`.
-The failure is still the last line of stderr. Other lines are not JSON in either format: the
-findings of `lint-markers` and the summary line of `merge` stay text, so parse only the lines
-that start with `{` and keep the objects that have a `level`. The warning about an invalid `PATCHCOV_ERROR_FORMAT` is also text, since the
-format it asks for was not accepted.
+To tell the lines apart, read `level`: a warning is `"warning"`, a [finding or summary](#findings-and-summary)
+is `"error"` or `"info"`, and the failure is `"error"` with a `code`. The failure is still the last
+line of stderr. The warning about an invalid `PATCHCOV_ERROR_FORMAT` is
+the one line that is not JSON, since the format it asks for was not accepted; parse only the lines
+that start with `{` and keep the objects that have a `level`.
+
+### Findings and summary
+
+Two commands print more than warnings and a failure. With `--error-format json` each of these is a
+JSON line too, with the same text in `message` as the default format prints.
+
+`patchcov lint-markers` prints one object per file with a malformed marker (the first one in the file),
+before the failure. A finding is `level` `"error"` because it makes the run
+fail, but its `kind` is `"marker-finding"`; the failure that follows it has `kind` `"marker"`
+and a `code`, and is the last line. To find the failure, take the last line, not the first
+`"error"`.
+
+```json
+{"level":"error","kind":"marker-finding","path":"src/a.rs","line":12,"message":"unterminated `reason=\"…\"` (missing closing quote)"}
+```
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `level` | string | Always `"error"` |
+| `kind` | string | Always `"marker-finding"` |
+| `path` | string | The file, as the default format prints it: repo-relative, or as given on the command line |
+| `line` | number | The 1-based line of the marker (of the opening marker, for an unterminated region) |
+| `message` | string | What is wrong, without the `path:line: ` that the default format starts the line with |
+
+`patchcov merge` prints its summary line as an `info` object, after any warnings:
+
+```json
+{"level":"info","kind":"merge-summary","message":"merged 3 report(s) into merged.lcov: 12 file(s), 840 of 1000 lines covered (84.00%)","inputs":3,"output":"merged.lcov","files":12,"total_lines":1000,"covered_lines":840,"percent":84.0}
+```
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `level` | string | Always `"info"` |
+| `kind` | string | Always `"merge-summary"` |
+| `message` | string | The summary line, as the default format prints it |
+| `inputs` | number | The number of reports merged |
+| `output` | string | The file written, as the default format prints it |
+| `files` | number | The files in the merged report |
+| `total_lines` | number | Executable lines in the merged report |
+| `covered_lines` | number | Executable lines hit at least once |
+| `percent` | number or `null` | Line coverage on a 0 to 100 scale, **not rounded** (`message` rounds it); `null` when there are no executable lines |
 
 ## Output schema
 

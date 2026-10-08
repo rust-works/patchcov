@@ -947,3 +947,42 @@ fn an_invalid_format_variable_warns_in_text() {
         stderr(&output)
     );
 }
+
+/// Under `--error-format json` the `merge` summary is an `info` object with the
+/// counts as fields, and the default format still prints the sentence.
+#[test]
+fn the_merge_summary_is_a_json_info_line() {
+    let fx = Fixture::new();
+    let report = fx.report();
+    let out = fx.root().join("merged.lcov");
+
+    let output = run(
+        fx.root(),
+        &["merge", "--error-format", "json", "-o", path(&out)],
+        &[path(&report)],
+    );
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    let text = stderr(&output);
+    assert_eq!(text.lines().count(), 1, "{text}");
+    let summary: serde_json::Value = serde_json::from_str(text.trim_end()).unwrap();
+    assert_eq!(summary["level"], "info");
+    assert_eq!(summary["kind"], "merge-summary");
+    assert_eq!(summary["inputs"], 1);
+    assert_eq!(summary["files"], 1);
+    assert_eq!(summary["total_lines"], 4);
+    assert_eq!(summary["covered_lines"], 2);
+    assert_eq!(summary["percent"], 50.0);
+    assert!(summary["output"].as_str().unwrap().ends_with("merged.lcov"));
+
+    let plain = run(fx.root(), &["merge", "-o", path(&out)], &[path(&report)]);
+    let line = stderr(&plain);
+    assert!(
+        line.starts_with("merged 1 report(s) into ") && line.contains("2 of 4 lines covered (50"),
+        "{line}"
+    );
+    assert_eq!(
+        line.trim_end(),
+        summary["message"].as_str().unwrap(),
+        "the object's message is the text line"
+    );
+}
