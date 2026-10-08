@@ -26,6 +26,22 @@ use crate::{
 /// `patchcov diff` settings, unioned with the CLI flags. Missing ⇒ no-op.
 const COVERAGE_CONFIG_FILE: &str = "config.yaml";
 
+/// Parses a `--fail-under-*` threshold, which must be a finite number.
+///
+/// `nan` would make the gate never fail (`p < NaN` is always false), and `inf`
+/// has no JSON representation. A range is not enforced: `150` is a valid
+/// "always fail" threshold.
+fn finite_percentage(value: &str) -> std::result::Result<f64, String> {
+    let pct: f64 = value
+        .parse()
+        .map_err(|e: std::num::ParseFloatError| e.to_string())?;
+    if pct.is_finite() {
+        Ok(pct)
+    } else {
+        Err(format!("{value} is not a finite number"))
+    }
+}
+
 /// Coverage report format selector (CLI mirror of [`Format`] plus auto-detect).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 #[value(rename_all = "kebab-case")]
@@ -141,7 +157,7 @@ pub struct DiffCommand {
     pub format: Option<OutputFormatArg>,
 
     /// Fail (non-zero exit) when patch coverage is below this percentage.
-    #[arg(long, value_name = "PCT")]
+    #[arg(long, value_name = "PCT", value_parser = finite_percentage)]
     pub fail_under_patch: Option<f64>,
 
     /// Fail when a touched file absent from every report matches this repo-relative glob.
@@ -158,7 +174,7 @@ pub struct DiffCommand {
     /// `cargo llvm-cov report --summary-only`. A report with no executable lines
     /// fails the gate: there is nothing to measure, and passing would let an
     /// empty report slip through.
-    #[arg(long, value_name = "PCT")]
+    #[arg(long, value_name = "PCT", value_parser = finite_percentage)]
     pub fail_under_lines: Option<f64>,
 
     /// Warn, instead of failing, when a nonempty head, shard or baseline report
@@ -1681,6 +1697,39 @@ mod tests {
                 .unwrap();
         assert_eq!(cmd.fail_under_lines, Some(80.0));
         assert_eq!(cmd.fail_under_patch, None);
+    }
+
+    #[test]
+    fn thresholds_must_be_finite_numbers() {
+        use clap::Parser;
+        for flag in ["--fail-under-patch", "--fail-under-lines"] {
+            for bad in ["nan", "NaN", "inf", "infinity", "-inf", "1e999", "abc"] {
+                let parsed = DiffCommand::try_parse_from(["diff", "--report", "r.lcov", flag, bad]);
+                assert!(parsed.is_err(), "{flag} {bad} should be rejected");
+            }
+            for good in ["0", "80", "99.5", "100", "150"] {
+                let parsed =
+                    DiffCommand::try_parse_from(["diff", "--report", "r.lcov", flag, good]);
+                assert!(parsed.is_ok(), "{flag} {good} should be accepted");
+            }
+        }
+    }
+
+    #[test]
+    fn non_finite_threshold_error_names_the_value() {
+        use clap::Parser;
+        let err = DiffCommand::try_parse_from([
+            "diff",
+            "--report",
+            "r.lcov",
+            "--fail-under-patch",
+            "nan",
+        ])
+        .err()
+        .unwrap()
+        .to_string();
+        assert!(err.contains("invalid value 'nan'"), "{err}");
+        assert!(err.contains("not a finite number"), "{err}");
     }
 
     // ── sharded reports ──────────────────────────────────────────
