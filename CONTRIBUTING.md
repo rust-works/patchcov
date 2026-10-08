@@ -81,6 +81,7 @@ cargo test --locked --doc
 cargo clippy --locked --all-targets -- -D warnings
 cargo run --locked -- lint-markers
 cargo +1.88.0 check --locked --all-targets
+cargo +1.88.0 test --locked --doc
 RUSTDOCFLAGS='-D warnings' cargo doc --locked --no-deps --document-private-items
 ```
 
