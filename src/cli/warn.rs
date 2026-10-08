@@ -3,7 +3,7 @@
 //! Every non-fatal problem patchcov reports goes through [`warn`], so a wrapper
 //! that asked for `--error-format json` gets one JSON object per warning instead
 //! of a `warning: ...` line. The object is described in
-//! `docs/reference.md#error-output`.
+//! `docs/reference.md#warnings`.
 
 use std::sync::OnceLock;
 
@@ -37,7 +37,7 @@ pub enum WarningKind {
 
 impl WarningKind {
     /// The stable name of this class in the JSON warning object, listed in
-    /// `docs/reference.md#error-output`.
+    /// `docs/reference.md#warnings`.
     pub const fn name(self) -> &'static str {
         match self {
             Self::Deprecated => "deprecated",
@@ -47,6 +47,10 @@ impl WarningKind {
         }
     }
 }
+
+/// The `level` of a warning object; an [`ErrorReport`](super::exit::ErrorReport)
+/// has `"error"`.
+const LEVEL: &str = "warning";
 
 /// The JSON warning object, with its fields in the documented order.
 #[derive(Serialize)]
@@ -73,7 +77,7 @@ fn render(format: ErrorFormat, kind: WarningKind, message: &str) -> String {
     match format {
         ErrorFormat::Text => format!("warning: {message}"),
         ErrorFormat::Json => serde_json::to_string(&WarningReport {
-            level: "warning",
+            level: LEVEL,
             kind: kind.name(),
             message,
         })

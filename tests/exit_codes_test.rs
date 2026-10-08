@@ -724,10 +724,12 @@ fn a_glob_that_matches_nothing_is_a_json_warning() {
 fn the_error_follows_the_warnings_and_is_told_apart_by_level() {
     let fx = Fixture::new();
     let measured = fx.report();
-    // The deprecated flag warns; the gate then fails at 50%.
+    // Two deprecated flags warn; the gate then fails at 50%.
     let output = fx.diff(&[
         "--report",
         path(&measured),
+        "--format",
+        "markdown",
         "--fail-on-path-mismatch",
         "--fail-under-patch",
         "80",
@@ -735,16 +737,18 @@ fn the_error_follows_the_warnings_and_is_told_apart_by_level() {
         "json",
     ]);
     assert_eq!(code(&output), 1, "{}", stderr(&output));
-    let levels: Vec<_> = stderr(&output)
+    let text = stderr(&output);
+    let levels: Vec<_> = text
         .lines()
-        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap()["level"].clone())
+        .map(|line| {
+            let object: serde_json::Value =
+                serde_json::from_str(line).unwrap_or_else(|err| panic!("not JSON ({err}): {line}"));
+            object["level"].clone()
+        })
         .collect();
-    assert_eq!(levels, ["warning", "error"]);
+    assert_eq!(levels, ["warning", "warning", "error"], "{text}");
     let error = report(&output);
-    assert_eq!(
-        (&error["level"], &error["kind"]),
-        (&"error".into(), &"gate".into())
-    );
+    assert_eq!(error["kind"], "gate");
 }
 
 #[test]

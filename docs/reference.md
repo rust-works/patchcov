@@ -187,7 +187,7 @@ With `--error-format json`, each warning is printed as one JSON line on stderr i
 To tell the lines apart, read `level`: a warning is `"warning"` and the failure is `"error"`.
 The failure is still the last line of stderr. Other lines are not JSON in either format: the
 findings of `lint-markers` and the summary line of `merge` stay text, so parse only the lines
-that start with `{`. The warning about an invalid `PATCHCOV_ERROR_FORMAT` is also text, since the
+that start with `{` and keep the objects that have a `level`. The warning about an invalid `PATCHCOV_ERROR_FORMAT` is also text, since the
 format it asks for was not accepted.
 
 ## Output schema

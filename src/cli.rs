@@ -17,13 +17,14 @@ use self::exit::ErrorReport;
 /// Environment variable that sets `--error-format`, when the flag is absent.
 pub const ERROR_FORMAT_ENV: &str = "PATCHCOV_ERROR_FORMAT";
 
-/// How a failure is printed to stderr.
+/// How a failure and the warnings are printed to stderr.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
 pub enum ErrorFormat {
-    /// `Error: <message>: <cause>...` on one line.
+    /// `Error: <message>: <cause>...` and `warning: <message>` on one line each.
     #[default]
     Text,
-    /// One line of JSON, see `docs/reference.md#error-output`.
+    /// One line of JSON each, see `docs/reference.md#error-output` and
+    /// `docs/reference.md#warnings`.
     Json,
 }
 
@@ -40,8 +41,8 @@ pub struct Cli {
     #[arg(long = "repo", short = 'C', global = true, value_name = "PATH")]
     pub repo: Option<PathBuf>,
 
-    /// How a failure is printed to stderr: `text` (an `Error:` line) or `json`
-    /// (one machine-readable object).
+    /// How a failure and the warnings are printed to stderr: `text` (an `Error:`
+    /// or `warning:` line) or `json` (one machine-readable object per line).
     ///
     /// Without the flag, `PATCHCOV_ERROR_FORMAT` is used; see
     /// [`Cli::resolve_error_format`].
