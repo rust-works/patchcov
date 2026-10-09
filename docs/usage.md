@@ -394,9 +394,9 @@ Markdown output. The report is written to stdout; warnings and errors go to stde
 `<PCT>` percent, so it can fail a CI step or a local pre-push check. Without it the
 command only reports and exits zero. `<PCT>` must be a finite number of at least `0`; `nan`,
 `inf` and negative values are usage errors (exit `2`), because a threshold that can never be
-undercut would disable the gate silently. Write `-inf` as `--fail-under-patch=-inf` to see why
-it is refused; with a space, the parser reports an unexpected argument instead. A value above
-`100`, such as `150`, is allowed and always fails.
+undercut would disable the gate silently. Both `--fail-under-patch -inf` and
+`--fail-under-patch=-inf` explain why the value is refused, as do `-nan` and `-.5`.
+A value above `100`, such as `150`, is allowed and always fails.
 
 `--fail-under-lines <PCT>` is the overall counterpart: it exits non-zero when line
 coverage across the whole head report is below `<PCT>` percent. It gates on the same

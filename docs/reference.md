@@ -57,6 +57,10 @@ the same way and chooses how a failure is printed; see [error output](#error-out
 | `--commit-url <URL>` | Commit-URL prefix for linking SHAs |
 | `--base-sha <SHA>` / `--head-sha <SHA>` | SHAs shown in the markdown `Comparing` line (both are needed for the line to appear) |
 
+For both `--fail-under-*` flags, space-separated negative float values such as `-inf`,
+`-nan` and `-.5` receive the same explanatory usage error as the `--flag=value` spelling.
+A following option instead of a value reports `a value is required`.
+
 The five footer and link flags fall back to environment variables; see
 [Environment variables](#environment-variables). `--format` is a hidden, deprecated alias
 of `-o/--output` that prints a warning. `--fail-on-path-mismatch` is a hidden, deprecated no-op
