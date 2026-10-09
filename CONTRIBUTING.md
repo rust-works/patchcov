@@ -115,9 +115,11 @@ cargo test --test doc_links_test
 It is offline: it reads the markdown, applies GitHub's heading-slug rules and ignores external
 URLs. File names are matched case-sensitively, as on GitHub, even on macOS and Windows.
 Fragments are checked only against markdown targets, so `src/lib.rs#L10` is not. Links inside
-code blocks and code spans are skipped. It is not a full markdown parser: setext headings
-(`Title` over `=====`), `[text][label]` links and parentheses inside a link destination are not
-understood, so use ATX headings (`## Title`) and plain inline links in these files.
+code blocks, code spans and HTML comments are skipped. CommonMark parsing handles headings
+(including setext headings), links and images, including reference links and parenthesized
+destinations. Unused reference definitions are ignored. Raw HTML support covers double-quoted
+`src`/`href` attributes and explicit `<a id="...">` / `<a name="...">` anchors. Symlink entries
+under `docs/` are skipped to avoid cycles.
 
 ## Merging
 
