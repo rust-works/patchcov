@@ -297,15 +297,25 @@ impl ErrorReport {
         json_line_or(record, self.fallback())
     }
 
-    /// The report without `chain` and `gates`, for a line that cannot be
-    /// serialized in full: the exit code, class and message still reach a wrapper.
+    /// A line that keeps the exit code, class and message when the full report
+    /// cannot be serialized. Keep `chain` and `gates` independently when each
+    /// serializes, so a broken component does not hide the other from a wrapper.
     fn fallback(&self) -> serde_json::Value {
-        serde_json::json!({
+        let mut fallback = serde_json::json!({
             "level": self.level,
             "code": self.code,
             "kind": self.kind,
             "message": self.message,
-        })
+        });
+        if let Ok(chain) = serde_json::to_value(&self.chain) {
+            fallback["chain"] = chain;
+        }
+        if let Some(gates) = &self.gates {
+            if let Ok(gates) = serde_json::to_value(gates) {
+                fallback["gates"] = gates;
+            }
+        }
+        fallback
     }
 }
 
@@ -813,12 +823,29 @@ mod tests {
         let config = ErrorReport::new(&err);
         assert_eq!(
             config.json_with(&Fails),
-            r#"{"code":5,"kind":"config","level":"error","message":"bad config"}"#
+            r#"{"chain":[],"code":5,"kind":"config","level":"error","message":"bad config"}"#
         );
         let usage = ErrorReport::usage("bad flag");
         assert_eq!(
             usage.json_with(&Fails),
-            r#"{"code":2,"kind":"usage","level":"error","message":"bad flag"}"#
+            r#"{"chain":[],"code":2,"kind":"usage","level":"error","message":"bad flag"}"#
         );
+    }
+
+    #[test]
+    fn fallback_keeps_chain_and_gates() {
+        let gate = gate_error(failures()).context("gate check failed");
+        let ordinary = ExitKind::Report
+            .error("could not read \"report\"\nnext line")
+            .context("outer error");
+        for report in [ErrorReport::new(&gate), ErrorReport::new(&ordinary)] {
+            let line = report.json_with(&Fails);
+            assert!(!line.contains('\n'), "{line}");
+            let fallback: serde_json::Value = serde_json::from_str(&line).unwrap();
+            // Compare the whole object: optional gates stay absent for ordinary
+            // errors, and every gate's data and ordering survive for gate errors.
+            assert_eq!(fallback, serde_json::to_value(&report).unwrap());
+            assert!(!fallback["chain"].as_array().unwrap().is_empty());
+        }
     }
 }

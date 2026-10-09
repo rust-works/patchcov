@@ -297,9 +297,11 @@ and a `code`, and is the last line. To find the failure, take the last line, not
 A line stays a JSON object even if patchcov cannot serialize its full record (a bug, not
 something a command line can cause), so stderr never has a blank line where a diagnostic
 belonged. A warning or summary line then has only `level`, `kind` and `message`, the first two
-being the record's own. An error line has `level`, `code`, `kind` and `message`; `message` is
-the outermost message alone, and `chain` and `gates` are missing. A finding's `message` is
-then the default format's whole line, `path:line:` included.
+being the record's own. An error line keeps `level`, `code`, `kind` and `message`;
+`message` is the outermost message alone. Its `chain` and `gates` are serialized independently
+and kept when each succeeds; only a component that cannot serialize is omitted. As in a
+normal error line, `gates` is absent when there are no failed gates. A finding's `message`
+is then the default format's whole line, `path:line:` included.
 
 ## Output schema
 
