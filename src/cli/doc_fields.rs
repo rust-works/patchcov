@@ -139,7 +139,10 @@ pub(super) struct Field {
 
 impl Field {
     fn from_row(row: &[&str]) -> Self {
-        assert!(row.len() == 3, "a field table row without 3 cells: {row:?}");
+        assert!(
+            row.len() >= 3,
+            "a field table row without name, type and meaning: {row:?}"
+        );
         Self {
             name: unticked(row[0]).to_owned(),
             // `number or `null``: the backticks are markup, not part of the type.
@@ -180,12 +183,13 @@ pub(super) fn table_fields(section: &str, kind: &str) -> Vec<String> {
         .collect()
 }
 
-/// The field names in the first column of the first table of `section`.
+/// The field names in the first column of the first table of `section`, whatever
+/// its other columns are.
 pub(super) fn first_table_fields(section: &str) -> Vec<String> {
-    first_table_rows(section)
-        .into_iter()
-        .map(|field| field.name)
-        .collect()
+    match tables(section).into_iter().next() {
+        Some((_, rows)) => rows.iter().map(|row| unticked(row[0]).to_owned()).collect(),
+        None => panic!("no table in the section"),
+    }
 }
 
 /// Whether `value` is what `phrase`, a cell of the `Type` column, says.
@@ -205,10 +209,14 @@ fn conforms(phrase: &str, value: &serde_json::Value) -> bool {
     }
 }
 
-/// The value a `Meaning` cell fixes with ``Always `"x"` ``, if it does.
-fn constant(meaning: &str) -> Option<&str> {
+/// The value a `Meaning` cell fixes with ``Always `"x"` `` (or ``Always `3` ``), if it
+/// does: the backticked JSON that follows `Always`.
+fn constant(meaning: &str) -> Option<serde_json::Value> {
     let code = first_code(meaning.strip_prefix("Always ")?)?;
-    code.strip_prefix('"')?.strip_suffix('"')
+    Some(
+        serde_json::from_str(code)
+            .unwrap_or_else(|error| panic!("`Always {code}` is not JSON ({error})")),
+    )
 }
 
 /// Panics unless `value` is of the type `phrase` names; `what` says whose it is.
@@ -229,7 +237,7 @@ pub(super) fn check_fields(rows: &[Field], value: &serde_json::Value, what: &str
         };
         check_type(&field.ty, actual, &format!("{what}: `{name}`"));
         if let Some(fixed) = constant(&field.meaning) {
-            assert_eq!(actual, fixed, "{what}: `{name}` is always `{fixed}`");
+            assert_eq!(*actual, fixed, "{what}: `{name}` is always `{fixed}`");
         }
     }
 }
@@ -259,6 +267,10 @@ pub(super) fn kind_codes(section: &str) -> Vec<(String, u8)> {
     };
     rows.iter()
         .map(|row| {
+            assert!(
+                row.len() == 2,
+                "a `kind` and `code` row without 2 cells: {row:?}"
+            );
             let code = unticked(row[1]);
             let code = code
                 .parse()
@@ -280,6 +292,10 @@ pub(super) fn gate_rows(section: &str) -> Vec<(String, Vec<(String, String)>)> {
     };
     rows.iter()
         .map(|row| {
+            assert!(
+                row.len() >= 2,
+                "a `gate` row without a Fields cell: {row:?}"
+            );
             let mut fields = Vec::new();
             // Each group is names, then `(type`: the text is cut at every `)`.
             for group in row[1].split(')') {
@@ -480,7 +496,7 @@ other
     }
 
     #[test]
-    #[should_panic(expected = "`level` is always `info`")]
+    #[should_panic(expected = "`level` is always `\"info\"`")]
     fn a_value_other_than_the_constant_is_a_failure() {
         let rows = field_rows(section(SAMPLE, "Inner"), "thing");
         let mut value = thing("");
@@ -521,11 +537,33 @@ other
     }
 
     #[test]
-    fn only_always_with_a_quoted_value_is_a_constant() {
-        assert_eq!(constant("Always `\"info\"`; more text"), Some("info"));
-        assert_eq!(constant("Always `3`"), None);
+    fn always_followed_by_a_json_value_is_a_constant() {
+        use serde_json::json;
+        assert_eq!(
+            constant("Always `\"info\"`; more text"),
+            Some(json!("info"))
+        );
+        assert_eq!(constant("Always `3`"), Some(json!(3)));
+        assert_eq!(constant("Always `true`"), Some(json!(true)));
         assert_eq!(constant("Always"), None);
         assert_eq!(constant("A count"), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "`Always info` is not JSON")]
+    fn a_constant_that_is_not_json_is_a_failure() {
+        constant("Always `info`");
+    }
+
+    #[test]
+    #[should_panic(expected = "`n` is always `3`")]
+    fn a_number_other_than_the_constant_is_a_failure() {
+        let rows = vec![Field {
+            name: "n".to_owned(),
+            ty: "number".to_owned(),
+            meaning: "Always `3`".to_owned(),
+        }];
+        check_fields(&rows, &serde_json::json!({"n": 4}), "thing");
     }
 
     #[test]

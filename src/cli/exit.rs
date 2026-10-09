@@ -633,9 +633,15 @@ mod tests {
     /// The code column of the "Exit codes" table: `0`, then every code.
     #[test]
     fn the_exit_code_table_lists_every_code() {
-        let mut want = vec!["0".to_owned()];
-        want.extend(every_kind().iter().map(|kind| kind.code().to_string()));
-        assert_eq!(first_table_fields(reference_section("Exit codes")), want);
+        let mut want = vec![0];
+        want.extend(every_kind().iter().map(|kind| kind.code()));
+        let mut listed: Vec<u8> = first_table_fields(reference_section("Exit codes"))
+            .iter()
+            .map(|code| code.parse().unwrap())
+            .collect();
+        listed.sort_unstable();
+        want.sort_unstable();
+        assert_eq!(listed, want);
     }
 
     /// An error with a cause, so `chain` is not empty.
@@ -668,6 +674,13 @@ mod tests {
             .collect();
         reports.push(ErrorReport::usage("bad flag"));
         reports.push(ErrorReport::new(&anyhow!("boom")));
+        let codes = kind_codes(section);
+        let gate_report = ErrorReport::new(&gate_error(failures()));
+        for report in reports.iter().chain([&gate_report]) {
+            // `code` is the code of the class `kind` names, as the docs table has it.
+            let pair = (report.kind.to_owned(), report.code);
+            assert!(codes.contains(&pair), "{pair:?} is not in {codes:?}");
+        }
         for report in &reports {
             let line = report.to_json();
             assert_eq!(json_keys(&line), without_gates, "{line}");
@@ -678,7 +691,7 @@ mod tests {
         assert!(reports.iter().any(|r| !r.chain.is_empty()));
         assert!(reports.iter().any(|r| r.chain.is_empty()));
 
-        let gate = ErrorReport::new(&gate_error(failures())).to_json();
+        let gate = gate_report.to_json();
         assert_eq!(json_keys(&gate), names, "{gate}");
         check_fields(&rows, &serde_json::from_str(&gate).unwrap(), &gate);
     }
