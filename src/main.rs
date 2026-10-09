@@ -3,14 +3,13 @@
 use std::ffi::OsString;
 use std::process::ExitCode;
 
-use clap::Parser;
 use patchcov::cli::exit::{self, ErrorReport};
 use patchcov::cli::warn;
 use patchcov::cli::{usage_report, Cli, ErrorFormat, ERROR_FORMAT_ENV};
 
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().collect();
-    let cli = match Cli::try_parse_from(&args) {
+    let cli = match Cli::try_parse_args(&args) {
         Ok(cli) => cli,
         Err(err) => {
             let env = std::env::var_os(ERROR_FORMAT_ENV);

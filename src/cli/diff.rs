@@ -1706,7 +1706,7 @@ mod tests {
                 "nan", "NaN", "inf", "infinity", "-inf", "1e999", "abc", "-5", "-0.1", "-1e999",
             ];
             for bad in bad {
-                // Both spellings must reach the value parser and be refused.
+                // Both spellings must be refused, even without CLI normalization.
                 let joined = format!("{flag}={bad}");
                 for args in [
                     vec!["diff", "--report", "r.lcov", &joined],
@@ -1751,35 +1751,6 @@ mod tests {
                     .to_string();
                 assert!(err.contains("invalid value '-5'"), "{args:?}: {err}");
                 assert!(err.contains("must not be negative"), "{args:?}: {err}");
-            }
-        }
-    }
-
-    #[test]
-    fn negative_infinity_threshold_is_refused_in_both_spellings() {
-        use clap::Parser;
-        // clap does not count `-inf` as a negative number, so the space-separated
-        // form is `unexpected argument '-i'`; the `=` form still gets the
-        // explanation. That is the price of `a value is required` below.
-        for flag in ["--fail-under-patch", "--fail-under-lines"] {
-            let joined = format!("{flag}=-inf");
-            let err = DiffCommand::try_parse_from(["diff", "--report", "r.lcov", &joined])
-                .err()
-                .unwrap()
-                .to_string();
-            assert!(err.contains("invalid value '-inf'"), "{flag}: {err}");
-            assert!(err.contains("must be a finite number"), "{flag}: {err}");
-
-            // Still a usage error, just not an explained one.
-            for bad in ["-inf", "-nan", "-.5"] {
-                let err = DiffCommand::try_parse_from(["diff", "--report", "r.lcov", flag, bad])
-                    .err()
-                    .unwrap();
-                assert_eq!(
-                    err.kind(),
-                    clap::error::ErrorKind::UnknownArgument,
-                    "{flag} {bad}"
-                );
             }
         }
     }

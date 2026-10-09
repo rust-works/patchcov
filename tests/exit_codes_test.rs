@@ -230,6 +230,47 @@ fn usage_errors_are_2() {
 }
 
 #[test]
+fn negative_threshold_usage_errors_explain_the_value() {
+    let fx = Fixture::new();
+    for flag in ["--fail-under-patch", "--fail-under-lines"] {
+        for (value, reason) in [
+            ("-inf", "must be a finite number"),
+            ("-nan", "must be a finite number"),
+            ("-.5", "must not be negative"),
+        ] {
+            let joined = format!("{flag}={value}");
+            for spelling in [vec![flag, value], vec![joined.as_str()]] {
+                for format in ["text", "json"] {
+                    let mut argv = vec!["--report", "missing.lcov", "--error-format", format];
+                    argv.extend(&spelling);
+                    let output = fx.diff(&argv);
+                    assert_eq!(code(&output), 2, "{}", stderr(&output));
+                    assert!(output.stdout.is_empty());
+                    let text = stderr(&output);
+                    let message = if format == "json" {
+                        let report: serde_json::Value = serde_json::from_str(&text).unwrap();
+                        assert_eq!(report["code"], 2);
+                        assert_eq!(report["kind"], "usage");
+                        report["message"].as_str().unwrap().to_owned()
+                    } else {
+                        text
+                    };
+                    assert!(
+                        message.contains(&format!("invalid value '{value}'")),
+                        "{message}"
+                    );
+                    assert!(message.contains(flag), "{message}");
+                    assert!(message.contains(reason), "{message}");
+                }
+            }
+        }
+        let output = fx.diff(&["--report", "missing.lcov", flag, "--head-ref", "HEAD"]);
+        assert_eq!(code(&output), 2);
+        assert!(stderr(&output).contains(&format!("a value is required for '{flag} <PCT>'")));
+    }
+}
+
+#[test]
 fn an_unusable_report_is_3() {
     let fx = Fixture::new();
     let missing = fx.root().join("missing.lcov");

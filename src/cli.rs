@@ -69,6 +69,43 @@ pub enum Commands {
 }
 
 impl Cli {
+    /// Parses process arguments, including space-separated negative float
+    /// thresholds that clap does not recognize as negative numbers.
+    ///
+    /// Unlike the derived `Parser::try_parse_from`, this accepts `-inf`, `-nan`
+    /// and `-.5` as threshold values so the validator can explain their errors.
+    pub fn try_parse_args(args: &[OsString]) -> std::result::Result<Self, clap::Error> {
+        let mut normalized = Vec::with_capacity(args.len());
+        let mut args = args.iter().peekable();
+        // The executable name is never an option.
+        normalized.extend(args.next().cloned());
+        while let Some(arg) = args.next() {
+            if arg == "--" {
+                normalized.push(arg.clone());
+                normalized.extend(args.cloned());
+                break;
+            }
+            if matches!(
+                arg.to_str(),
+                Some("--fail-under-patch" | "--fail-under-lines")
+            ) && args.peek().is_some_and(|value| {
+                value
+                    .to_str()
+                    .is_some_and(|value| value.starts_with('-') && value.parse::<f64>().is_ok())
+            }) {
+                let mut joined = arg.clone();
+                joined.push("=");
+                if let Some(value) = args.next() {
+                    joined.push(value);
+                }
+                normalized.push(joined);
+            } else {
+                normalized.push(arg.clone());
+            }
+        }
+        Self::try_parse_from(normalized)
+    }
+
     /// The format failures are printed in: the flag, else `env` (the value of
     /// [`ERROR_FORMAT_ENV`]), else text.
     ///
@@ -223,6 +260,108 @@ mod tests {
             .chain(list.iter().copied())
             .map(OsString::from)
             .collect()
+    }
+
+    #[test]
+    fn negative_float_thresholds_have_explanations_in_both_spellings() {
+        for flag in ["--fail-under-patch", "--fail-under-lines"] {
+            for (value, reason) in [
+                ("-inf", "must be a finite number"),
+                ("-infinity", "must be a finite number"),
+                ("-NaN", "must be a finite number"),
+                ("-nan", "must be a finite number"),
+                ("-1e999", "must be a finite number"),
+                ("-.5", "must not be negative"),
+                ("-5", "must not be negative"),
+            ] {
+                let joined = format!("{flag}={value}");
+                for argv in [
+                    args(&["diff", "--report", "r.lcov", flag, value]),
+                    args(&["diff", "--report", "r.lcov", &joined]),
+                ] {
+                    let err = Cli::try_parse_args(&argv).err().unwrap();
+                    assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+                    let message = err.to_string();
+                    assert!(
+                        message.contains(&format!("invalid value '{value}'")),
+                        "{message}"
+                    );
+                    assert!(message.contains(flag), "{message}");
+                    assert!(message.contains(reason), "{message}");
+                }
+            }
+            for value in ["-0", "-.0", "-0e5"] {
+                let cli = Cli::try_parse_args(&args(&["diff", "--report", "r.lcov", flag, value]))
+                    .unwrap();
+                let Commands::Diff(cmd) = cli.command else {
+                    panic!("expected diff")
+                };
+                let got = if flag == "--fail-under-patch" {
+                    cmd.fail_under_patch
+                } else {
+                    cmd.fail_under_lines
+                };
+                assert!(got.is_some_and(|v| v == 0.0 && v.is_sign_positive()));
+            }
+        }
+    }
+
+    #[test]
+    fn normalization_preserves_missing_values_and_unrelated_arguments() {
+        for flag in ["--fail-under-patch", "--fail-under-lines"] {
+            for rest in [
+                vec!["--fail-on-unmeasured", "src/**"],
+                vec!["--head-ref", "main"],
+                vec!["--no-explanation"],
+                vec!["--fail-under-patch", "80"],
+                vec!["--fail-under-lines", "80"],
+                vec!["-o", "json"],
+                vec![],
+            ] {
+                let mut argv = args(&["diff", "--report", "r.lcov", flag]);
+                argv.extend(rest.into_iter().map(OsString::from));
+                let message = Cli::try_parse_args(&argv).err().unwrap().to_string();
+                assert!(
+                    message.contains(&format!("a value is required for '{flag} <PCT>'")),
+                    "{message}"
+                );
+            }
+        }
+        for argv in [
+            args(&[
+                "diff",
+                "--report",
+                "r.lcov",
+                "--",
+                "--fail-under-patch",
+                "-inf",
+            ]),
+            args(&[
+                "diff",
+                "--report",
+                "r.lcov",
+                "--fail-under-patch",
+                "--unknown",
+            ]),
+            args(&["merge", "--fail-under-patch", "-inf"]),
+        ] {
+            let expected = Cli::try_parse_from(&argv).err().unwrap();
+            let got = Cli::try_parse_args(&argv).err().unwrap();
+            assert_eq!(got.kind(), expected.kind());
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            let report = OsString::from_vec(b"report-\xff.lcov".to_vec());
+            let mut argv = args(&["diff", "--report"]);
+            argv.push(report.clone());
+            argv.extend([OsString::from("--fail-under-patch"), OsString::from("-.0")]);
+            let cli = Cli::try_parse_args(&argv).unwrap();
+            let Commands::Diff(cmd) = cli.command else {
+                panic!("expected diff")
+            };
+            assert_eq!(cmd.report, vec![PathBuf::from(report)]);
+        }
     }
 
     fn cli_with(error_format: Option<ErrorFormat>) -> Cli {
