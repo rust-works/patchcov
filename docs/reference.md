@@ -105,6 +105,14 @@ Up to and including 0.3.0, every runtime error, gate or not, exited `1`. A scrip
 gate failed" keeps working. One that tested for `1` to mean "anything went wrong" should test
 for a non-zero status instead.
 
+When upgrading from 0.3.0, a path mismatch also changes from a warning to an error by default:
+a nonempty head, shard or baseline report with no normalized path matching a tracked file
+now exits `7`. A CI run that previously passed with exit `0` and a warning can therefore
+fail after upgrading. Pass `--allow-path-mismatch` or set `diff.allow-path-mismatch: true`
+in `.patchcov/config.yaml` to restore the warning-only behavior while
+[fixing the report paths](troubleshooting.md#no-files-match-the-diff).
+Either option is enough; [other errors and failed gates](#exit-codes) still fail the run.
+
 ```bash
 patchcov diff --report head.lcov --fail-under-patch 80 > coverage-comment.md
 case $? in
