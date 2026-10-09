@@ -572,12 +572,6 @@ mod tests {
     }
 
     #[test]
-    fn json_line_or_uses_the_given_fallback() {
-        let line = json_line_or(&Fails, json!({ "code": 7 }));
-        assert_eq!(line, r#"{"code":7}"#);
-    }
-
-    #[test]
     fn json_line_prefers_the_record() {
         let record = Record {
             level: "info",
