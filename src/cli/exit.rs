@@ -315,6 +315,10 @@ mod tests {
     use anyhow::{anyhow, Context};
 
     use super::*;
+    use crate::cli::doc_fields::{
+        assert_every_variant, check_fields, check_type, example_keys, first_table_fields,
+        first_table_rows, gate_rows, json_keys, kind_codes, reference_section, Field,
+    };
 
     #[test]
     fn error_builds_a_tagged_error() {
@@ -575,5 +579,166 @@ mod tests {
             .unwrap_err();
         assert_eq!(code(&err), ExitKind::Other.code());
         assert_eq!(err.to_string(), "x");
+    }
+
+    /// The number of `ExitKind` variants, as [`kind_ordinal`] counts them.
+    const KINDS: usize = 8;
+
+    /// Numbers every variant. No `_` arm: a new variant fails to compile here until
+    /// it is numbered, and then [`every_kind`] has to be given a sample for it.
+    const fn kind_ordinal(kind: ExitKind) -> usize {
+        match kind {
+            ExitKind::Gate => 0,
+            ExitKind::Usage => 1,
+            ExitKind::Report => 2,
+            ExitKind::Marker => 3,
+            ExitKind::Config => 4,
+            ExitKind::Git => 5,
+            ExitKind::PathMismatch => 6,
+            ExitKind::Other => 7,
+        }
+    }
+
+    fn every_kind() -> [ExitKind; KINDS] {
+        [
+            ExitKind::Gate,
+            ExitKind::Usage,
+            ExitKind::Report,
+            ExitKind::Marker,
+            ExitKind::Config,
+            ExitKind::Git,
+            ExitKind::PathMismatch,
+            ExitKind::Other,
+        ]
+    }
+
+    #[test]
+    fn every_kind_has_a_sample() {
+        assert_every_variant(every_kind().map(kind_ordinal), KINDS, "ExitKind");
+    }
+
+    /// The `kind` to `code` table of the docs is `ExitKind`, both ways.
+    #[test]
+    fn the_kind_table_matches_exit_kind() {
+        let mut documented = kind_codes(reference_section("Error output"));
+        documented.sort();
+        let mut actual: Vec<_> = every_kind()
+            .iter()
+            .map(|kind| (kind.name().to_owned(), kind.code()))
+            .collect();
+        actual.sort();
+        assert_eq!(documented, actual);
+    }
+
+    /// The code column of the "Exit codes" table: `0`, then every code.
+    #[test]
+    fn the_exit_code_table_lists_every_code() {
+        let mut want = vec!["0".to_owned()];
+        want.extend(every_kind().iter().map(|kind| kind.code().to_string()));
+        assert_eq!(first_table_fields(reference_section("Exit codes")), want);
+    }
+
+    /// An error with a cause, so `chain` is not empty.
+    fn with_chain(kind: ExitKind) -> anyhow::Error {
+        Err::<(), _>(anyhow!("root"))
+            .context("middle")
+            .classify(kind)
+            .unwrap_err()
+    }
+
+    /// The `Field` table of "Error output" is the error object: its fields in
+    /// order, their types and the constant `level`. `gates` is there for a gate
+    /// only.
+    #[test]
+    fn the_error_object_matches_the_docs_table() {
+        let section = reference_section("Error output");
+        let rows = first_table_rows(section);
+        let names: Vec<_> = rows.iter().map(|f| f.name.as_str()).collect();
+        let without_gates: Vec<_> = names.iter().copied().filter(|n| *n != "gates").collect();
+
+        let ordinary_rows: Vec<Field> = rows
+            .iter()
+            .filter(|field| field.name != "gates")
+            .cloned()
+            .collect();
+        let mut reports: Vec<ErrorReport> = every_kind()
+            .iter()
+            .filter(|kind| **kind != ExitKind::Gate)
+            .map(|kind| ErrorReport::new(&with_chain(*kind)))
+            .collect();
+        reports.push(ErrorReport::usage("bad flag"));
+        reports.push(ErrorReport::new(&anyhow!("boom")));
+        for report in &reports {
+            let line = report.to_json();
+            assert_eq!(json_keys(&line), without_gates, "{line}");
+            let value = serde_json::from_str(&line).unwrap();
+            check_fields(&ordinary_rows, &value, &line);
+        }
+        // A non-empty chain is checked as an array of strings above; so is an empty one.
+        assert!(reports.iter().any(|r| !r.chain.is_empty()));
+        assert!(reports.iter().any(|r| r.chain.is_empty()));
+
+        let gate = ErrorReport::new(&gate_error(failures())).to_json();
+        assert_eq!(json_keys(&gate), names, "{gate}");
+        check_fields(&rows, &serde_json::from_str(&gate).unwrap(), &gate);
+    }
+
+    /// The two example lines of "Error output" have the keys of a real one.
+    #[test]
+    fn the_error_examples_match_the_docs_table() {
+        let section = reference_section("Error output");
+        let names = first_table_fields(section);
+        let ordinary: Vec<_> = names.iter().filter(|n| *n != "gates").cloned().collect();
+        assert_eq!(example_keys(section, "report"), Some(ordinary));
+        assert_eq!(example_keys(section, "gate"), Some(names));
+    }
+
+    /// The number of `GateFailure` variants, as [`gate_ordinal`] counts them.
+    const GATES: usize = 3;
+
+    /// Numbers every variant, with no `_` arm, like [`kind_ordinal`].
+    const fn gate_ordinal(gate: &GateFailure) -> usize {
+        match gate {
+            GateFailure::FailUnderPatch { .. } => 0,
+            GateFailure::FailUnderLines { .. } => 1,
+            GateFailure::FailOnUnmeasured { .. } => 2,
+        }
+    }
+
+    #[test]
+    fn every_gate_has_a_sample() {
+        assert_every_variant(failures().iter().map(gate_ordinal), GATES, "GateFailure");
+    }
+
+    /// The `gates` table of the docs is `GateFailure`: the gates, their fields in
+    /// order and the types of the values, with `measured` both a number and `null`.
+    #[test]
+    fn the_gate_table_matches_gate_failure() {
+        let documented = gate_rows(reference_section("Error output"));
+        let mut documented_names: Vec<_> = documented.iter().map(|(g, _)| g.as_str()).collect();
+        documented_names.sort_unstable();
+
+        let samples = failures();
+        let mut seen = Vec::new();
+        for failure in &samples {
+            let value = serde_json::to_value(failure).unwrap();
+            let gate = value["gate"].as_str().unwrap().to_owned();
+            let (_, fields) = documented
+                .iter()
+                .find(|(g, _)| *g == gate)
+                .unwrap_or_else(|| panic!("the docs list no gate `{gate}`"));
+            let keys = json_keys(&serde_json::to_string(failure).unwrap());
+            let want: Vec<_> = std::iter::once("gate")
+                .chain(fields.iter().map(|(name, _)| name.as_str()))
+                .collect();
+            assert_eq!(keys, want, "{gate}");
+            for (name, ty) in fields {
+                check_type(ty, &value[name], &format!("{gate}: `{name}`"));
+            }
+            seen.push(gate);
+        }
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen, documented_names);
     }
 }
