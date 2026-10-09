@@ -294,7 +294,7 @@ impl ErrorReport {
     /// `record` as the line, or this report's [`fallback`](Self::fallback) if it
     /// cannot be serialized. `to_json` passes the report itself.
     fn json_with(&self, record: &impl Serialize) -> String {
-        json_line_or(record, self.fallback())
+        json_line_or(record, || self.fallback())
     }
 
     /// A line that keeps the exit code, class and message when the full report

@@ -269,7 +269,7 @@ fn render(format: ErrorFormat, warning: &Warning) -> String {
 /// The minimal object has the record's own `level` and `kind`, and `message`. A
 /// record that needs more to survive uses [`json_line_or`].
 pub(super) fn json_line(record: &impl Diagnostic, message: &str) -> String {
-    json_line_or(record, json_fallback(record, message))
+    json_line_or(record, || json_fallback(record, message))
 }
 
 /// The shared fallback fields, built from strings so serialization cannot fail.
@@ -278,14 +278,18 @@ pub(super) fn json_fallback(record: &impl Diagnostic, message: &str) -> serde_js
     json!({ "level": record.level(), "kind": record.kind(), "message": message })
 }
 
-/// `record` as one line of JSON, or `fallback` if it cannot be serialized.
+/// `record` as one line of JSON, or the object built by `fallback` if it cannot
+/// be serialized. The factory runs only on failure, exactly once.
 ///
 /// Every record holds strings, numbers and lists today, which always serialize.
 /// The fallback keeps a record added later with a fallible `Serialize` (a map with
 /// non-string keys, say) from turning its diagnostic into a blank stderr line. It
 /// should be built from strings and numbers, so that it cannot fail itself.
-pub(super) fn json_line_or(record: &impl Serialize, fallback: serde_json::Value) -> String {
-    serde_json::to_string(record).unwrap_or_else(|_| fallback.to_string())
+pub(super) fn json_line_or(
+    record: &impl Serialize,
+    fallback: impl FnOnce() -> serde_json::Value,
+) -> String {
+    serde_json::to_string(record).unwrap_or_else(|_| fallback().to_string())
 }
 
 /// The line `emit` prints, the one place that picks between the formats.
@@ -462,6 +466,28 @@ mod tests {
         };
         let line = render_line(ErrorFormat::Json, "unused", &Labelled(record));
         assert_eq!(line, r#"{"level":"info","n":null,"message":"two\nlines"}"#);
+    }
+
+    #[test]
+    fn json_line_or_skips_fallback_on_success() {
+        let record = Record {
+            level: "info",
+            n: Some(1),
+            message: "two\nlines",
+        };
+        let line = json_line_or(&record, || panic!("fallback called on success"));
+        assert_eq!(line, r#"{"level":"info","n":1,"message":"two\nlines"}"#);
+    }
+
+    #[test]
+    fn json_line_or_calls_fallback_once_on_failure() {
+        let mut calls = 0;
+        let line = json_line_or(&Fails, || {
+            calls += 1;
+            json!({ "message": "bad \"record\"\nline" })
+        });
+        assert_eq!(calls, 1);
+        assert_eq!(line, r#"{"message":"bad \"record\"\nline"}"#);
     }
 
     /// The messages are unchanged from before the warnings carried fields, except
