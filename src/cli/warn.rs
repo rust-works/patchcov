@@ -194,6 +194,20 @@ impl fmt::Display for Warning {
 /// has `"error"`.
 const LEVEL: &str = "warning";
 
+/// A JSON object printed on a diagnostic line, which names its own `level` and
+/// `kind`.
+///
+/// The record is the one place those two values live, so the minimal line that
+/// stands in for it when it cannot be serialized is labelled as the record would
+/// have been.
+pub trait Diagnostic: Serialize {
+    /// The `level` of the object.
+    fn level(&self) -> &str;
+
+    /// The `kind` of the object.
+    fn kind(&self) -> &str;
+}
+
 /// The JSON warning object, with its fields in the documented order.
 #[derive(Serialize)]
 struct WarningReport<'a, F = Warning> {
@@ -204,6 +218,16 @@ struct WarningReport<'a, F = Warning> {
     fields: &'a F,
 }
 
+impl<F: Serialize> Diagnostic for WarningReport<'_, F> {
+    fn level(&self) -> &str {
+        self.level
+    }
+
+    fn kind(&self) -> &str {
+        self.kind
+    }
+}
+
 /// Prints a warning to stderr, as a `warning: ...` line or a JSON object.
 pub fn warn(warning: &Warning) {
     eprintln!("{}", render(current_format(), warning));
@@ -211,13 +235,10 @@ pub fn warn(warning: &Warning) {
 
 /// Prints a line to stderr: `text`, or `record` as JSON under `--error-format json`.
 ///
-/// `level` and `kind` are the record's own, for the line that stands in for it if it
-/// cannot be serialized.
-pub fn emit(level: &str, kind: &str, text: impl AsRef<str>, record: &impl Serialize) {
-    eprintln!(
-        "{}",
-        render_line(current_format(), (level, kind), text.as_ref(), record)
-    );
+/// If the record cannot be serialized, the line that stands in for it has the
+/// record's `level` and `kind` and `text` as its `message`.
+pub fn emit(text: impl AsRef<str>, record: &impl Diagnostic) {
+    eprintln!("{}", render_line(current_format(), text.as_ref(), record));
 }
 
 /// The line `warn` prints: a warning is an `emit`ted line whose text is
@@ -225,7 +246,6 @@ pub fn emit(level: &str, kind: &str, text: impl AsRef<str>, record: &impl Serial
 fn render(format: ErrorFormat, warning: &Warning) -> String {
     render_line(
         format,
-        (LEVEL, warning.kind()),
         &format!("warning: {warning}"),
         &WarningReport {
             level: LEVEL,
@@ -244,21 +264,17 @@ fn render(format: ErrorFormat, warning: &Warning) -> String {
 /// The fallback keeps a record added later with a fallible `Serialize` (a map with
 /// non-string keys, say) from turning its diagnostic into a blank stderr line. It
 /// is built from strings, so it cannot fail itself.
-pub(super) fn json_line(record: &impl Serialize, level: &str, kind: &str, message: &str) -> String {
-    serde_json::to_string(record)
-        .unwrap_or_else(|_| json!({ "level": level, "kind": kind, "message": message }).to_string())
+pub(super) fn json_line(record: &impl Diagnostic, message: &str) -> String {
+    serde_json::to_string(record).unwrap_or_else(|_| {
+        json!({ "level": record.level(), "kind": record.kind(), "message": message }).to_string()
+    })
 }
 
 /// The line `emit` prints, the one place that picks between the formats.
-fn render_line(
-    format: ErrorFormat,
-    (level, kind): (&str, &str),
-    text: &str,
-    record: &impl Serialize,
-) -> String {
+fn render_line(format: ErrorFormat, text: &str, record: &impl Diagnostic) -> String {
     match format {
         ErrorFormat::Text => text.to_string(),
-        ErrorFormat::Json => json_line(record, level, kind, text),
+        ErrorFormat::Json => json_line(record, text),
     }
 }
 
@@ -327,6 +343,21 @@ mod tests {
         message: &'static str,
     }
 
+    /// Any record, with the labels of the fallback line fixed.
+    #[derive(Serialize)]
+    #[serde(transparent)]
+    struct Labelled<T>(T);
+
+    impl<T: Serialize> Diagnostic for Labelled<T> {
+        fn level(&self) -> &'static str {
+            "info"
+        }
+
+        fn kind(&self) -> &'static str {
+            "thing"
+        }
+    }
+
     #[test]
     fn emit_text_is_the_text_untouched() {
         let record = Record {
@@ -335,7 +366,7 @@ mod tests {
             message: "ignored",
         };
         assert_eq!(
-            render_line(ErrorFormat::Text, ("info", "k"), "as is: 1", &record),
+            render_line(ErrorFormat::Text, "as is: 1", &Labelled(record)),
             "as is: 1"
         );
     }
@@ -348,7 +379,7 @@ mod tests {
             n: None,
             message: "two\nlines",
         };
-        let line = render_line(ErrorFormat::Json, ("info", "k"), "unused", &record);
+        let line = render_line(ErrorFormat::Json, "unused", &Labelled(record));
         assert_eq!(line, r#"{"level":"info","n":null,"message":"two\nlines"}"#);
     }
 
@@ -526,12 +557,7 @@ mod tests {
     /// A record that cannot be serialized still leaves its text, as one JSON line.
     #[test]
     fn emit_json_falls_back_to_the_text_when_the_record_fails() {
-        let line = render_line(
-            ErrorFormat::Json,
-            ("info", "thing"),
-            "two \"quoted\"\nlines",
-            &Fails,
-        );
+        let line = render_line(ErrorFormat::Json, "two \"quoted\"\nlines", &Labelled(Fails));
         assert_eq!(
             line,
             r#"{"kind":"thing","level":"info","message":"two \"quoted\"\nlines"}"#
@@ -545,8 +571,26 @@ mod tests {
             n: Some(1),
             message: "m",
         };
-        let line = json_line(&record, "error", "other", "unused");
+        let line = json_line(&Labelled(record), "unused");
         assert_eq!(line, r#"{"level":"info","n":1,"message":"m"}"#);
+    }
+
+    /// The level and kind the fallback line takes from a record are the ones the
+    /// full object serializes.
+    #[test]
+    fn warning_report_names_its_own_level_and_kind() {
+        let warning = path_mismatch();
+        let report = WarningReport {
+            level: LEVEL,
+            kind: warning.kind(),
+            message: warning.to_string(),
+            fields: &warning,
+        };
+        let object = serde_json::to_value(&report).unwrap();
+        assert_eq!(object["level"], report.level());
+        assert_eq!(object["kind"], report.kind());
+        assert_eq!(report.level(), "warning");
+        assert_eq!(report.kind(), "path-mismatch");
     }
 
     /// The warning's fields failing to serialize leaves `level`, `kind` and the
@@ -556,7 +600,6 @@ mod tests {
         let warning = path_mismatch();
         let line = render_line(
             ErrorFormat::Json,
-            (LEVEL, warning.kind()),
             &warning.to_string(),
             &WarningReport {
                 level: LEVEL,
