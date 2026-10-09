@@ -344,9 +344,9 @@ pub(super) fn kind_rows(section: &str) -> Vec<(String, Vec<String>)> {
         .collect()
 }
 
-/// The keys of the single-line `json` example in `section` whose `kind` is `kind`,
-/// if the section has one. A line that is not a JSON object is not an example.
-pub(super) fn example_keys(section: &str, kind: &str) -> Option<Vec<String>> {
+/// The single-line `json` example in `section` whose `kind` is `kind`, if the
+/// section has one. A line that is not a JSON object is not an example.
+pub(super) fn example_line<'a>(section: &'a str, kind: &str) -> Option<&'a str> {
     let mut in_json = false;
     for line in section.lines() {
         if line.starts_with("```") {
@@ -355,11 +355,16 @@ pub(super) fn example_keys(section: &str, kind: &str) -> Option<Vec<String>> {
             let value: serde_json::Value = serde_json::from_str(line)
                 .unwrap_or_else(|error| panic!("a `json` example is not JSON ({error}): {line}"));
             if value["kind"] == kind {
-                return Some(json_keys(line));
+                return Some(line);
             }
         }
     }
     None
+}
+
+/// The keys of the single-line `json` example for `kind`, in written order.
+pub(super) fn example_keys(section: &str, kind: &str) -> Option<Vec<String>> {
+    example_line(section, kind).map(json_keys)
 }
 
 #[allow(clippy::unwrap_used)]
@@ -443,6 +448,11 @@ other
             ["level", "kind", "n"]
         );
         assert_eq!(example_keys(inner, "other"), None);
+        assert_eq!(
+            example_line(inner, "thing"),
+            Some(r#"{"level":"info","kind":"thing","n":1}"#)
+        );
+        assert_eq!(example_line(inner, "other"), None);
     }
 
     #[test]
