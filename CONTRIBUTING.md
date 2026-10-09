@@ -113,8 +113,11 @@ cargo test --test doc_links_test
 ```
 
 It is offline: it reads the markdown, applies GitHub's heading-slug rules and ignores external
-URLs. Fragments are checked only against markdown targets, so `src/lib.rs#L10` is not. Links
-inside code blocks and code spans are skipped.
+URLs. File names are matched case-sensitively, as on GitHub, even on macOS and Windows.
+Fragments are checked only against markdown targets, so `src/lib.rs#L10` is not. Links inside
+code blocks and code spans are skipped. It is not a full markdown parser: setext headings
+(`Title` over `=====`), `[text][label]` links and parentheses inside a link destination are not
+understood, so use ATX headings (`## Title`) and plain inline links in these files.
 
 ## Merging
 

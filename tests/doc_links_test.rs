@@ -7,30 +7,59 @@
 //! `-` and `_` is dropped, each space becomes `-`, and a repeated slug gets `-1`, `-2`, ...
 //! The parsing is deliberately small, not a CommonMark parser: it covers the constructs these
 //! files use (ATX headings, inline and reference-style links, `src`/`href` attributes, `<a id>`)
-//! and skips fenced code blocks and inline code.
+//! and skips fenced code blocks and inline code. Not supported: setext headings (`Title` over
+//! `=====`), `[text][label]` usage (the definitions are checked), multi-backtick code spans,
+//! parentheses inside a destination, and links in HTML comments.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+use std::sync::LazyLock;
+
+macro_rules! regex {
+    ($name:ident, $pattern:expr) => {
+        static $name: LazyLock<Regex> = LazyLock::new(|| Regex::new($pattern).unwrap());
+    };
+}
+
+regex!(LINK_TEXT, r"\[([^\]]*)\]\([^)]*\)");
+regex!(HTML_TAG, r"<[^>]*>");
+regex!(CLOSING_HASHES, r"\s+#+\s*$");
+regex!(HEADING, r"^ {0,3}#{1,6}\s+(.*)$");
+regex!(EXPLICIT_ANCHOR, r#"<a\s[^>]*?(?:id|name)\s*=\s*"([^"]*)""#);
+regex!(INLINE_CODE, r"`[^`]*`");
+regex!(INLINE_LINK, r"\]\(\s*(<[^>]*>|[^)\s]*)");
+// A footnote definition (`[^1]: text`) is not a link definition.
+regex!(LINK_DEFINITION, r"^ {0,3}\[[^\]^][^\]]*\]:\s*(<[^>]*>|\S+)");
+regex!(HTML_ATTRIBUTE, r#"\b(?:src|href)\s*=\s*"([^"]*)""#);
+regex!(URL_SCHEME, r"^[A-Za-z][A-Za-z0-9+.-]*:");
 
 /// The lines of a markdown file that are prose: fenced code blocks are dropped. Each line is
 /// paired with its 1-based number.
 fn prose_lines(text: &str) -> Vec<(usize, &str)> {
-    let mut fence: Option<char> = None;
+    // The open fence: its character and length. A closing fence repeats the character at least
+    // as many times and carries no info string.
+    let mut fence: Option<(char, usize)> = None;
     let mut lines = Vec::new();
     for (index, line) in text.lines().enumerate() {
         let trimmed = line.trim_start();
-        let opener = ["```", "~~~"]
-            .into_iter()
-            .find(|marker| trimmed.starts_with(marker))
-            .and_then(|marker| marker.chars().next());
-        match (fence, opener) {
-            (None, Some(c)) => fence = Some(c),
-            (Some(open), Some(c)) if open == c => fence = None,
+        let marker = trimmed
+            .chars()
+            .next()
+            .filter(|c| matches!(c, '`' | '~'))
+            .map(|c| (c, trimmed.chars().take_while(|&x| x == c).count()))
+            .filter(|&(_, length)| length >= 3);
+        match (fence, marker) {
+            (None, Some(open)) => fence = Some(open),
             (None, None) => lines.push((index + 1, line)),
-            _ => {}
+            (Some((c, length)), Some((found, count)))
+                if found == c && count >= length && trimmed.trim_end().chars().all(|x| x == c) =>
+            {
+                fence = None;
+            }
+            (Some(_), _) => {}
         }
     }
     lines
@@ -38,12 +67,9 @@ fn prose_lines(text: &str) -> Vec<(usize, &str)> {
 
 /// GitHub's anchor for a heading's text, before any `-1` suffix for a duplicate.
 fn slug(heading: &str) -> String {
-    let links = Regex::new(r"\[([^\]]*)\]\([^)]*\)").unwrap();
-    let tags = Regex::new(r"<[^>]*>").unwrap();
-    let closing = Regex::new(r"\s+#+\s*$").unwrap();
-    let text = links.replace_all(heading, "$1");
-    let text = tags.replace_all(&text, "");
-    let text = closing.replace(text.trim(), "");
+    let text = LINK_TEXT.replace_all(heading, "$1");
+    let text = HTML_TAG.replace_all(&text, "");
+    let text = CLOSING_HASHES.replace(text.trim(), "");
     text.chars()
         .filter(|c| !matches!(c, '`' | '*'))
         .flat_map(char::to_lowercase)
@@ -58,22 +84,23 @@ fn slug(heading: &str) -> String {
 
 /// Every anchor a markdown file defines: its headings, and explicit `<a id>` / `<a name>`.
 fn anchors(text: &str) -> HashSet<String> {
-    let heading = Regex::new(r"^ {0,3}#{1,6}\s+(.*)$").unwrap();
-    let explicit = Regex::new(r#"<a\s[^>]*?(?:id|name)\s*=\s*"([^"]*)""#).unwrap();
-    let mut seen: HashMap<String, usize> = HashMap::new();
+    // As GitHub numbers duplicates: while the slug is taken, count up from the heading's own
+    // slug. A generated `notes-1` therefore also blocks a heading that slugs to `notes-1`.
+    let mut taken: HashMap<String, usize> = HashMap::new();
     let mut found = HashSet::new();
     for (_, line) in prose_lines(text) {
-        if let Some(caps) = heading.captures(line) {
+        if let Some(caps) = HEADING.captures(line) {
             let base = slug(&caps[1]);
-            let count = seen.entry(base.clone()).or_insert(0);
-            found.insert(if *count == 0 {
-                base
-            } else {
-                format!("{base}-{count}")
-            });
-            *count += 1;
+            let mut result = base.clone();
+            while taken.contains_key(&result) {
+                let count = taken.entry(base.clone()).or_insert(0);
+                *count += 1;
+                result = format!("{base}-{count}");
+            }
+            taken.insert(result.clone(), 0);
+            found.insert(result);
         }
-        for caps in explicit.captures_iter(line) {
+        for caps in EXPLICIT_ANCHOR.captures_iter(line) {
             found.insert(caps[1].to_string());
         }
     }
@@ -83,24 +110,20 @@ fn anchors(text: &str) -> HashSet<String> {
 /// Every link destination in a markdown file, with its line number. Covers `[text](dest)`,
 /// `![alt](dest)`, `[label]: dest` and `src="dest"` / `href="dest"`.
 fn destinations(text: &str) -> Vec<(usize, String)> {
-    let inline_code = Regex::new(r"`[^`]*`").unwrap();
-    let inline = Regex::new(r"\]\(\s*(<[^>]*>|[^)\s]*)").unwrap();
-    let reference = Regex::new(r"^ {0,3}\[[^\]]+\]:\s*(<[^>]*>|\S+)").unwrap();
-    let attribute = Regex::new(r#"\b(?:src|href)\s*=\s*"([^"]*)""#).unwrap();
     let mut found = Vec::new();
     for (number, line) in prose_lines(text) {
-        let line = inline_code.replace_all(line, "");
+        let line = INLINE_CODE.replace_all(line, "");
         let mut push = |dest: &str| {
             let dest = dest.trim_start_matches('<').trim_end_matches('>');
             found.push((number, dest.to_string()));
         };
-        for caps in inline.captures_iter(&line) {
+        for caps in INLINE_LINK.captures_iter(&line) {
             push(&caps[1]);
         }
-        if let Some(caps) = reference.captures(&line) {
+        if let Some(caps) = LINK_DEFINITION.captures(&line) {
             push(&caps[1]);
         }
-        for caps in attribute.captures_iter(&line) {
+        for caps in HTML_ATTRIBUTE.captures_iter(&line) {
             push(&caps[1]);
         }
     }
@@ -132,8 +155,43 @@ fn percent_decode(text: &str) -> String {
 
 /// Whether the destination leaves the repository: `https://...`, `mailto:...`, `//host/...`.
 fn is_external(dest: &str) -> bool {
-    let scheme = Regex::new(r"^[A-Za-z][A-Za-z0-9+.-]*:").unwrap();
-    dest.starts_with("//") || scheme.is_match(dest)
+    dest.starts_with("//") || URL_SCHEME.is_match(dest)
+}
+
+/// Whether `target` exists with exactly this spelling. macOS and Windows look names up
+/// case-insensitively, so `Path::exists` alone would accept `docs/Usage.md` there while GitHub
+/// does not.
+fn exists_exactly(root: &Path, target: &Path) -> bool {
+    if !target.exists() {
+        return false;
+    }
+    let mut normal = PathBuf::new();
+    for component in target.components() {
+        match component {
+            Component::ParentDir => {
+                normal.pop();
+            }
+            Component::CurDir => {}
+            other => normal.push(other),
+        }
+    }
+    let Ok(below_root) = normal.strip_prefix(root) else {
+        return true;
+    };
+    let mut dir = root.to_path_buf();
+    for name in below_root.components() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            return false;
+        };
+        if !entries
+            .filter_map(Result::ok)
+            .any(|entry| entry.file_name() == name.as_os_str())
+        {
+            return false;
+        }
+        dir.push(name);
+    }
+    true
 }
 
 /// The problems in `files` (paths relative to `root`), one line each as `file:line: message`.
@@ -150,7 +208,8 @@ fn check(root: &Path, files: &[PathBuf]) -> Vec<String> {
                 Some((path, fragment)) => (path, Some(percent_decode(fragment))),
                 None => (dest.as_str(), None),
             };
-            let path = percent_decode(path);
+            // A query string (`?plain=1`) is a viewer option, not part of the file name.
+            let path = percent_decode(path.split_once('?').map_or(path, |(path, _)| path));
             let target = if path.is_empty() {
                 root.join(file)
             } else if let Some(from_root) = path.strip_prefix('/') {
@@ -159,7 +218,7 @@ fn check(root: &Path, files: &[PathBuf]) -> Vec<String> {
                 root.join(file).parent().unwrap().join(&path)
             };
             let here = format!("{}:{line}", file.display());
-            if !target.exists() {
+            if !exists_exactly(root, &target) {
                 problems.push(format!("{here}: `{dest}` does not exist"));
                 continue;
             }
@@ -243,6 +302,13 @@ fn duplicate_headings_get_numeric_suffixes() {
         .iter()
         .all(|a| found.contains(*a)));
     assert_eq!(found.len(), 3);
+
+    // A generated suffix can collide with a literal heading: GitHub gives the third `notes-1-1`.
+    let found = anchors("# Notes\n\n## Notes\n\n## Notes 1\n");
+    assert_eq!(
+        found,
+        HashSet::from(["notes".into(), "notes-1".into(), "notes-1-1".into()])
+    );
 }
 
 #[test]
@@ -250,6 +316,11 @@ fn code_blocks_define_no_anchors_and_contain_no_links() {
     let text = "# Real\n\n```\n# Not a heading\n[x](missing.md)\n```\n\nUse `[y](missing.md)`.\n";
     assert_eq!(anchors(text), HashSet::from(["real".to_string()]));
     assert!(destinations(text).is_empty());
+
+    // A longer fence is not closed by a shorter one or by one with an info string.
+    let nested = "````md\n```\n```rust\n[x](missing.md)\n```\n````\n[y](after.md)\n";
+    let found: Vec<_> = destinations(nested).into_iter().map(|(_, d)| d).collect();
+    assert_eq!(found, ["after.md"]);
 }
 
 #[test]
@@ -285,7 +356,10 @@ fn dead_links_and_anchors_are_reported() {
          [missing anchor](docs/a.md#section-two)\n\
          [missing self anchor](#nowhere)\n\
          [encoded](docs/a.md#section%2Done)\n\
-         <a id=\"custom\"></a> [custom](#custom)\n",
+         <a id=\"custom\"></a> [custom](#custom)\n\
+         [query](docs/a.md?plain=1#section-one) [footnote]\n\n\
+         [^1]: Not a link.\n\
+         [wrong case](docs/A.md)\n",
     )
     .unwrap();
     fs::write(root.join("docs/code.rs"), "fn main() {}\n").unwrap();
@@ -297,11 +371,14 @@ fn dead_links_and_anchors_are_reported() {
 
     let files = [PathBuf::from("README.md"), PathBuf::from("docs/a.md")];
     let problems = check(root, &files);
-    assert_eq!(problems.len(), 4, "{problems:#?}");
+    assert_eq!(problems.len(), 5, "{problems:#?}");
     assert!(problems[0].contains("README.md:5") && problems[0].contains("does not exist"));
     assert!(
         problems[1].contains("README.md:6") && problems[1].contains("no heading `#section-two`")
     );
     assert!(problems[2].contains("README.md:7") && problems[2].contains("no heading `#nowhere`"));
-    assert!(problems[3].contains("a.md:3") && problems[3].contains("no heading `#Title`"));
+    assert!(
+        problems[3].contains("README.md:13") && problems[3].contains("`docs/A.md` does not exist")
+    );
+    assert!(problems[4].contains("a.md:3") && problems[4].contains("no heading `#Title`"));
 }
