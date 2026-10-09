@@ -2614,13 +2614,6 @@ mod tests {
         use crate::cli::doc_fields::section;
 
         let (_dir, repo, base) = repo_with_added_file();
-        // A bare repo has no workdir prefix to strip, preserving the absolute
-        // normalized paths shown in the troubleshooting example.
-        let bare = repo.join("bare.git");
-        git2::build::RepoBuilder::new()
-            .bare(true)
-            .clone(repo.to_str().unwrap(), &bare)
-            .unwrap();
         let report = repo.join("head.lcov");
         let mut lcov = String::new();
         for name in ["a.rs", "b.rs", "c.rs"]
@@ -2632,7 +2625,7 @@ mod tests {
         }
         fs::write(&report, lcov).unwrap();
         let error = command(report.clone(), &base)
-            .run(Some(&bare))
+            .run(Some(&repo))
             .err()
             .expect("unmatched report paths must fail in strict mode");
         assert_eq!(crate::cli::exit::code(&error), 7);
