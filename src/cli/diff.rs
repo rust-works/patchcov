@@ -815,9 +815,13 @@ impl DiffCommand {
         let sharded = self.report.len() > 1;
         let mut merged = CoverageReport::new();
         for path in &self.report {
-            let path = anchor(path, check.root);
-            let mut report =
-                read_report_mode(&path, self.report_format, check.root, self.branch_coverage)?;
+            let resolved = anchor(path, check.root);
+            let mut report = read_report_mode(
+                &resolved,
+                self.report_format,
+                check.root,
+                self.branch_coverage,
+            )?;
             report.map_paths(mappings).classify(ExitKind::Config)?;
             if sharded {
                 require_executable_lines(&path.display().to_string(), &report)
@@ -827,7 +831,7 @@ impl DiffCommand {
                 &mut report,
                 strip_prefix,
                 ignore,
-                &path,
+                path,
                 check,
             )?);
             merged.merge(report);
@@ -850,9 +854,9 @@ impl DiffCommand {
         check: &mut ReportPathCheck<'_>,
         excluded: &mut ExcludedFiles,
     ) -> Result<CoverageReport> {
-        let path = anchor(path, check.root);
+        let resolved = anchor(path, check.root);
         let mut report = read_report_mode(
-            &path,
+            &resolved,
             self.baseline_report_format,
             check.root,
             self.branch_coverage,
@@ -862,7 +866,7 @@ impl DiffCommand {
             &mut report,
             strip_prefix,
             ignore,
-            &path,
+            path,
             check,
         )?);
         Ok(report)

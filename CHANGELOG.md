@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Report and shard diagnostic labels now preserve the input argument in `diff` and
+  `merge`, even with `-C`. This changes warning messages and JSON `report`/`shard`
+  values that previously included the working directory, and the corresponding
+  path-mismatch and empty-shard error messages. File resolution is unchanged.
+
 ## [0.3.0](https://github.com/rust-works/patchcov/compare/v0.2.0...v0.3.0) - 2026-10-07
 
 ### Fixed

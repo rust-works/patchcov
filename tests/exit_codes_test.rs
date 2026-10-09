@@ -832,73 +832,117 @@ fn warning_in(cwd: &Path, args: &[&str]) -> (serde_json::Value, String) {
     (object, line)
 }
 
-/// `docs/reference.md#paths-in-warning-fields`: a relative report is named with the
-/// directory patchcov works in joined to it, so `report` is not the argument as typed,
-/// and it is the string the message names.
-#[test]
-fn a_relative_report_is_named_joined_to_the_working_directory() {
-    let fx = Fixture::new();
-    fx.file("head.lcov", "SF:nowhere/else.rs\nDA:1,1\nend_of_record\n");
-    let dir = fx.root().file_name().unwrap().to_str().unwrap();
-    let diff = ["diff", "--base-ref", &fx.base, "--allow-path-mismatch"];
-    let cases: [(&Path, Vec<&str>, PathBuf); 3] = [
-        // No `-C`: joined to `.`.
-        (fx.root(), vec![], Path::new(".").join("head.lcov")),
-        // `-C <dir>`, as typed: absolute here, relative to the parent there.
-        (
-            fx.root(),
-            vec!["-C", fx.root().to_str().unwrap()],
-            fx.root().join("head.lcov"),
-        ),
+/// Exercise each root mode independently of the input spelling. A successful
+/// warning also proves that the input was read relative to the supplied root.
+fn input_label_cases(fx: &Fixture) -> Vec<(&Path, Vec<&str>)> {
+    vec![
+        (fx.root(), vec![]),
+        (fx.root(), vec!["-C", fx.root().to_str().unwrap()]),
         (
             fx.root().parent().unwrap(),
-            vec!["-C", dir],
-            Path::new(dir).join("head.lcov"),
+            vec!["-C", fx.root().file_name().unwrap().to_str().unwrap()],
         ),
-    ];
-    for (cwd, global, named) in cases {
-        let mut args = global.clone();
-        args.extend(diff);
-        args.extend(["--report", "head.lcov"]);
-        let (object, line) = warning_in(cwd, &args);
-        let named = named.display().to_string();
-        assert_eq!(object["report"], named, "{global:?}");
-        assert!(
-            line.starts_with(&format!("coverage report {named}: ")),
-            "{global:?}: {line}"
-        );
+    ]
+}
+
+/// `docs/reference.md#paths-in-warning-fields`: both head and baseline labels
+/// preserve the argument, regardless of `-C` and the spelling of the path.
+#[test]
+fn report_warning_labels_preserve_input_arguments() {
+    let fx = Fixture::new();
+    fx.report();
+    let foreign = fx.file(
+        "reports/foreign.lcov",
+        "SF:nowhere/else.rs\nDA:1,1\nend_of_record\n",
+    );
+    let absolute = foreign.to_str().unwrap();
+    for baseline in [false, true] {
+        for (cwd, global) in input_label_cases(&fx) {
+            for input in ["reports/foreign.lcov", "./reports/foreign.lcov", absolute] {
+                let mut args = global.clone();
+                args.extend(["diff", "--base-ref", &fx.base, "--allow-path-mismatch"]);
+                if baseline {
+                    args.extend(["--report", "head.lcov", "--baseline-report", input]);
+                } else {
+                    // Two inputs exercise head shard loading as well.
+                    args.extend(["--report", "head.lcov", "--report", input]);
+                }
+                let (object, line) = warning_in(cwd, &args);
+                assert_eq!(object["report"], input, "{args:?}");
+                assert!(
+                    line.starts_with(&format!("coverage report {input}: ")),
+                    "{args:?}: {line}"
+                );
+            }
+        }
     }
 }
 
-/// `merge` names a relative shard as typed unless it is given `-C`.
 #[test]
-fn a_relative_shard_is_named_as_typed_unless_merge_has_c() {
+fn shard_warning_labels_preserve_input_arguments() {
     let fx = Fixture::new();
-    fx.file("two.lcov", "SF:/other/runner/a.rs\nDA:1,1\nend_of_record\n");
-    let merge = [
-        "--strip-prefix",
-        "/ci/workspace",
-        "-o",
-        "merged.lcov",
-        "two.lcov",
-    ];
-    let root = fx.root().to_str().unwrap();
-    let cases = [
-        (vec!["merge"], "two.lcov".to_owned()),
-        (
-            vec!["-C", root, "merge"],
-            fx.root().join("two.lcov").display().to_string(),
-        ),
-    ];
-    for (head, named) in cases {
-        let mut args = head.clone();
-        args.extend(merge);
-        let (object, line) = warning_in(fx.root(), &args);
-        assert_eq!(object["shard"], named, "{head:?}");
-        assert!(
-            line.starts_with(&format!("coverage shard {named}: ")),
-            "{head:?}: {line}"
-        );
+    let foreign = fx.file(
+        "reports/two.lcov",
+        "SF:/other/runner/a.rs\nDA:1,1\nend_of_record\n",
+    );
+    for (cwd, global) in input_label_cases(&fx) {
+        for input in [
+            "reports/two.lcov",
+            "./reports/two.lcov",
+            foreign.to_str().unwrap(),
+        ] {
+            let mut args = global.clone();
+            args.extend([
+                "merge",
+                "--strip-prefix",
+                "/ci/workspace",
+                "-o",
+                "merged.lcov",
+                input,
+            ]);
+            let (object, line) = warning_in(cwd, &args);
+            assert_eq!(object["shard"], input, "{args:?}");
+            assert!(
+                line.starts_with(&format!("coverage shard {input}: ")),
+                "{args:?}: {line}"
+            );
+        }
+    }
+}
+
+#[test]
+fn strict_path_mismatch_preserves_the_input_label() {
+    let fx = Fixture::new();
+    fx.file(
+        "foreign.lcov",
+        "SF:nowhere/else.rs\nDA:1,1\nend_of_record\n",
+    );
+    for (cwd, global) in input_label_cases(&fx) {
+        for format in ["text", "json"] {
+            let mut args = global.clone();
+            args.extend([
+                "diff",
+                "--base-ref",
+                &fx.base,
+                "--report",
+                "foreign.lcov",
+                "--error-format",
+                format,
+            ]);
+            let output = command(cwd).args(&args).output().unwrap();
+            assert_eq!(code(&output), 7, "{args:?}: {}", stderr(&output));
+            let text = stderr(&output);
+            let message = if format == "json" {
+                let object: serde_json::Value = serde_json::from_str(&text).unwrap();
+                object["message"].as_str().unwrap().to_owned()
+            } else {
+                text.strip_prefix("Error: ").unwrap().to_owned()
+            };
+            assert!(
+                message.starts_with("coverage report foreign.lcov: "),
+                "{args:?}: {message}"
+            );
+        }
     }
 }
 
