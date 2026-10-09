@@ -11,7 +11,7 @@ use std::fmt;
 
 use serde::Serialize;
 
-use super::warn::{json_line_or, Diagnostic};
+use super::warn::{json_fallback, json_line_or, Diagnostic};
 
 /// A class of failure, and the exit code it ends the process with.
 ///
@@ -301,12 +301,8 @@ impl ErrorReport {
     /// cannot be serialized. Keep `chain` and `gates` independently when each
     /// serializes, so a broken component does not hide the other from a wrapper.
     fn fallback(&self) -> serde_json::Value {
-        let mut fallback = serde_json::json!({
-            "level": self.level,
-            "code": self.code,
-            "kind": self.kind,
-            "message": self.message,
-        });
+        let mut fallback = json_fallback(self, &self.message);
+        fallback["code"] = self.code.into();
         if let Ok(chain) = serde_json::to_value(&self.chain) {
             fallback["chain"] = chain;
         }
@@ -815,15 +811,26 @@ mod tests {
         }
     }
 
+    /// The injection seam used to force failure also handles the real report.
+    #[test]
+    fn json_with_prefers_the_supplied_record() {
+        let report = ErrorReport::usage("bad flag");
+        assert_eq!(report.json_with(&report), report.to_json());
+        assert_eq!(
+            report.json_with(&serde_json::json!({ "other": 1 })),
+            r#"{"other":1}"#
+        );
+    }
+
     /// What survives when the full report cannot be serialized: the exit code
     /// still reaches a wrapper, with the class and the message.
     #[test]
     fn fallback_keeps_level_code_kind_and_message() {
-        let err = ExitKind::Config.error("bad config");
+        let err = ExitKind::Config.error("bad \"config\"\nline");
         let config = ErrorReport::new(&err);
         assert_eq!(
             config.json_with(&Fails),
-            r#"{"chain":[],"code":5,"kind":"config","level":"error","message":"bad config"}"#
+            r#"{"chain":[],"code":5,"kind":"config","level":"error","message":"bad \"config\"\nline"}"#
         );
         let usage = ErrorReport::usage("bad flag");
         assert_eq!(

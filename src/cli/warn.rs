@@ -269,10 +269,13 @@ fn render(format: ErrorFormat, warning: &Warning) -> String {
 /// The minimal object has the record's own `level` and `kind`, and `message`. A
 /// record that needs more to survive uses [`json_line_or`].
 pub(super) fn json_line(record: &impl Diagnostic, message: &str) -> String {
-    json_line_or(
-        record,
-        json!({ "level": record.level(), "kind": record.kind(), "message": message }),
-    )
+    json_line_or(record, json_fallback(record, message))
+}
+
+/// The shared fallback fields, built from strings so serialization cannot fail.
+/// Records that need more fields to survive extend this object.
+pub(super) fn json_fallback(record: &impl Diagnostic, message: &str) -> serde_json::Value {
+    json!({ "level": record.level(), "kind": record.kind(), "message": message })
 }
 
 /// `record` as one line of JSON, or `fallback` if it cannot be serialized.
