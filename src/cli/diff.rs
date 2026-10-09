@@ -350,8 +350,8 @@ fn apply_ignored(report: &mut CoverageReport, markers: &BTreeMap<String, FileMar
     report.retain_lines(|path, line| markers.get(path).is_none_or(|m| !m.ignored.contains(&line)));
 }
 
-/// Resolves a relative report `path` against `repo_root`, so the report and the
-/// git repository always anchor to the same root; an absolute `path` is kept.
+/// Resolves a relative report `path` against the invocation directory
+/// (`repo_root`); an absolute `path` is kept.
 pub(super) fn anchor(path: &Path, repo_root: &Path) -> PathBuf {
     if path.is_absolute() {
         path.to_path_buf()
@@ -642,13 +642,12 @@ impl DiffCommand {
 
     /// Runs the analysis and renders the output without printing.
     ///
-    /// `repo_root` is the repository to analyze (`None` defaults to `.`, which
-    /// preserves the CI invocation that runs from the repo root). Relative
-    /// `--report`/`--baseline-report` paths are anchored to it so the git repo
-    /// and the coverage reports always resolve against the same root.
+    /// `repo_root` is the invocation directory (`None` defaults to `.`). The
+    /// repository is discovered from there, while relative `--report` and
+    /// `--baseline-report` paths remain anchored to the invocation directory.
     pub fn run(&self, repo_root: Option<&Path>) -> Result<DiffOutcome> {
         let repo_path = repo_root.map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-        let repo = Repository::open(&repo_path)
+        let repo = Repository::discover(&repo_path)
             .with_context(|| format!("could not open git repository at {}", repo_path.display()))
             .classify(ExitKind::Git)?;
 
@@ -667,7 +666,8 @@ impl DiffCommand {
         // Union the repo-config ignore-list with the CLI flag, then compile once
         // so an invalid pattern is a single up-front error rather than failing
         // separately per report.
-        let config_dir = resolve_config_dir_at(self.config_dir.as_deref(), &repo_path);
+        let workdir = repo.workdir().unwrap_or(&repo_path);
+        let config_dir = resolve_config_dir_at(self.config_dir.as_deref(), workdir);
         let config = load_coverage_config(&config_dir)?.diff;
         paths::validate(&config.path_mappings).classify(ExitKind::Config)?;
         let ignore = self.compile_ignore(&config.ignore_filename_regex)?;
@@ -819,7 +819,7 @@ impl DiffCommand {
             let mut report = read_report_mode(
                 &resolved,
                 self.report_format,
-                check.root,
+                check.repo.workdir().unwrap_or(check.root),
                 self.branch_coverage,
             )?;
             report.map_paths(mappings).classify(ExitKind::Config)?;
@@ -842,9 +842,8 @@ impl DiffCommand {
     /// Reads and parses the baseline report, normalising paths to be repo-relative
     /// and recording the files `ignore` removed in `excluded`.
     ///
-    /// A relative `path` is resolved against `repo_root` so the report and the
-    /// git repository always anchor to the same root; an absolute `path` is
-    /// used as-is.
+    /// A relative `path` is resolved against the invocation directory; an
+    /// absolute `path` is used as-is.
     fn load_baseline(
         &self,
         path: &Path,
@@ -858,7 +857,7 @@ impl DiffCommand {
         let mut report = read_report_mode(
             &resolved,
             self.baseline_report_format,
-            check.root,
+            check.repo.workdir().unwrap_or(check.root),
             self.branch_coverage,
         )?;
         report.map_paths(mappings).classify(ExitKind::Config)?;

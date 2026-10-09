@@ -1233,3 +1233,118 @@ fn the_merge_summary_is_a_json_info_line() {
         "the object's message is the text line"
     );
 }
+
+/// Discovery must not move report paths from the invocation directory to the repo root.
+#[test]
+fn diff_discovers_from_subdirectories_and_keeps_report_paths() {
+    let fx = Fixture::new();
+    let report = fx.report();
+    fx.file("base.lcov", "SF:a.rs\nDA:1,1\nend_of_record\n");
+    // A root-only setting proves config is loaded from the discovered workdir.
+    fx.file(
+        ".patchcov/config.yaml",
+        "diff:\n  require-measured: ['b.rs']\n",
+    );
+    let sub = fx.root().join("sub");
+    std::fs::create_dir(&sub).unwrap();
+    let cases = [
+        (sub.as_path(), vec![]),
+        (fx.root(), vec!["-C", "sub"]),
+        (fx.root(), vec!["-C", path(&sub)]),
+    ];
+    for (cwd, global) in cases {
+        for head in ["../head.lcov", path(&report)] {
+            let output = command(cwd)
+                .env("GIT_CEILING_DIRECTORIES", fx.root().parent().unwrap())
+                .args(&global)
+                .args([
+                    "diff",
+                    "--base-ref",
+                    &fx.base,
+                    "--report",
+                    head,
+                    "--baseline-report",
+                    "../base.lcov",
+                    "--output",
+                    "json",
+                ])
+                .output()
+                .unwrap();
+            assert_eq!(code(&output), 1, "{global:?}: {}", stderr(&output));
+            assert!(stderr(&output).contains("b.rs"), "{}", stderr(&output));
+            let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(json["patch_coverage"]["covered"], 2);
+            assert_eq!(json["patch_coverage"]["total"], 4);
+            assert!(json.get("project_delta").is_some());
+        }
+    }
+}
+
+#[test]
+fn diff_subdirectory_go_module_and_warning_labels_use_their_own_roots() {
+    let fx = Fixture::new();
+    fx.file("go.mod", "module example.com/project\n");
+    fx.file(
+        "sub/head.cover",
+        "mode: set\nexample.com/project/a.rs:2.1,3.1 1 1\n",
+    );
+    fx.file(
+        "sub/base.cover",
+        "mode: set\nexample.com/project/a.rs:1.1,1.10 1 1\n",
+    );
+    fx.file(
+        "sub/mismatch.lcov",
+        "SF:missing.rs\nDA:1,1\nend_of_record\n",
+    );
+    let sub = fx.root().join("sub");
+    for (cwd, global) in [
+        (sub.as_path(), vec![]),
+        (fx.root(), vec!["-C", "sub"]),
+        (fx.root(), vec!["-C", path(&sub)]),
+    ] {
+        let output = command(cwd)
+            .env("GIT_CEILING_DIRECTORIES", fx.root().parent().unwrap())
+            .args(&global)
+            .args([
+                "diff",
+                "--base-ref",
+                &fx.base,
+                "--report",
+                "head.cover",
+                "--baseline-report",
+                "base.cover",
+                "--output",
+                "json",
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(code(&output), 0, "{global:?}: {}", stderr(&output));
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(json["patch_coverage"]["covered"], 2);
+        assert_eq!(json["project_delta"]["total_before"], 100.0);
+        let output = command(cwd)
+            .env("GIT_CEILING_DIRECTORIES", fx.root().parent().unwrap())
+            .args(&global)
+            .args([
+                "diff",
+                "--base-ref",
+                &fx.base,
+                "--report",
+                "mismatch.lcov",
+                "--allow-path-mismatch",
+                "--error-format",
+                "json",
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(code(&output), 0, "{}", stderr(&output));
+        let warnings = json_warnings(&output);
+        assert_eq!(warnings.len(), 1);
+        let label = "mismatch.lcov";
+        assert_eq!(warnings[0]["report"], label);
+        assert!(warnings[0]["message"]
+            .as_str()
+            .unwrap()
+            .starts_with(&format!("coverage report {label}: ")));
+    }
+}

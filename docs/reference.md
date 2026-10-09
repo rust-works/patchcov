@@ -30,6 +30,13 @@ patchcov as if started in `<PATH>`, like `git -C`. `--error-format <text|json>` 
 the same way and chooses how a failure is printed; see [error output](#error-output).
 `-h/--help` and `-V/--version` work everywhere.
 
+`diff` discovers the nearest enclosing git repository from the current directory or `-C`
+(including a subdirectory). Relative `--report` and `--baseline-report` paths are resolved
+from that invocation directory, not the discovered repository root. For example, from
+`<repo>/sub`, use `patchcov diff --report ../head.lcov --base-sha HEAD~1` to read
+`<repo>/head.lcov`. Default config discovery, report path stripping and Go module detection
+use the repository working directory.
+
 ## `patchcov diff` flags
 
 | Flag | Purpose |
