@@ -346,9 +346,12 @@ mod tests {
     /// and the example line both. They do not depend on the percentage.
     #[test]
     fn the_summary_has_the_fields_the_docs_list() {
-        use crate::cli::doc_fields::{example_keys, json_keys, reference_section, table_fields};
+        use crate::cli::doc_fields::{
+            check_fields, example_keys, field_rows, json_keys, reference_section, table_fields,
+        };
         let section = reference_section("Findings and summary");
         let documented = table_fields(section, "merge-summary");
+        let rows = field_rows(section, "merge-summary");
         for percent in [Some(50.0), None] {
             let line = serde_json::to_string(&MergeSummary::new(&outcome(percent), "m")).unwrap();
             let keys = json_keys(&line);
@@ -367,6 +370,9 @@ mod tests {
                 ]
             );
             assert_eq!(documented, keys, "the docs table");
+            // The documented types and constant values: `percent` is a number, or
+            // `null` without executable lines.
+            check_fields(&rows, &serde_json::from_str(&line).unwrap(), "the summary");
         }
         assert_eq!(
             example_keys(section, "merge-summary"),

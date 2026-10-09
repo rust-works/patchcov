@@ -267,7 +267,8 @@ fn render_line(
 mod tests {
     use super::*;
     use crate::cli::doc_fields::{
-        example_keys, first_table_fields, json_keys, kind_rows, reference_section,
+        assert_every_variant, check_fields, example_keys, first_table_rows, json_keys, kind_rows,
+        reference_section,
     };
 
     fn path_mismatch() -> Warning {
@@ -275,6 +276,20 @@ mod tests {
             report: "head.lcov".to_owned(),
             file_count: 4,
             unmatched: vec!["a/x.rs".to_owned(), "a/y.rs".to_owned()],
+        }
+    }
+
+    /// The number of `Warning` variants, as [`variant_ordinal`] counts them.
+    const VARIANTS: usize = 4;
+
+    /// Numbers every variant. No `_` arm: a new variant fails to compile here until
+    /// it is numbered, and then the samples below have to include it.
+    const fn variant_ordinal(warning: &Warning) -> usize {
+        match warning {
+            Warning::Deprecated(_) => 0,
+            Warning::PathMismatch { .. } => 1,
+            Warning::ShardRoot(_) => 2,
+            Warning::GlobNoMatch { .. } => 3,
         }
     }
 
@@ -421,6 +436,11 @@ mod tests {
                 r#"{"globs":["**/*.nomatch","docs/*.x"],"origin":"lint-markers.include"}"#,
             ),
         ];
+        assert_every_variant(
+            cases.iter().map(|(warning, ..)| variant_ordinal(warning)),
+            VARIANTS,
+            "Warning",
+        );
         for (warning, kind, fields) in cases {
             assert_eq!(warning.kind(), kind, "{warning:?}");
             assert_eq!(serde_json::to_string(&warning).unwrap(), fields);
@@ -449,7 +469,9 @@ mod tests {
     fn each_kind_matches_the_docs() {
         let section = reference_section("Warnings");
         let common = ["level", "kind", "message"];
-        assert_eq!(first_table_fields(section), common);
+        let common_rows = first_table_rows(section);
+        let names: Vec<_> = common_rows.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, common);
 
         let warnings = [
             Warning::deprecated(DeprecatedFlag::Format),
@@ -459,6 +481,7 @@ mod tests {
             glob_no_match(GlobOrigin::IncludeFlag),
             glob_no_match(GlobOrigin::ConfigInclude),
         ];
+        assert_every_variant(warnings.iter().map(variant_ordinal), VARIANTS, "Warning");
         let documented = kind_rows(section);
         // The docs may order their rows as they like.
         let mut kinds: Vec<_> = warnings.iter().map(Warning::kind).collect();
@@ -471,7 +494,10 @@ mod tests {
         let mut examples = 0;
         for warning in &warnings {
             let kind = warning.kind();
-            let keys = json_keys(&render(ErrorFormat::Json, warning));
+            let line = render(ErrorFormat::Json, warning);
+            let keys = json_keys(&line);
+            // The types and constant values of the common fields.
+            check_fields(&common_rows, &serde_json::from_str(&line).unwrap(), kind);
             let fields = &documented.iter().find(|(k, _)| k == kind).unwrap().1;
             let want: Vec<_> = common
                 .iter()

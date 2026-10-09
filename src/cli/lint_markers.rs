@@ -202,7 +202,9 @@ fn tracked_paths(repo: &Repository) -> Result<Vec<PathBuf>> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use crate::cli::doc_fields::{example_keys, json_keys, reference_section, table_fields};
+    use crate::cli::doc_fields::{
+        check_fields, example_keys, field_rows, json_keys, reference_section, table_fields,
+    };
 
     /// The object keeps the documented fields in order, and splits the text a
     /// finding prints in the default format into `path`, `line` and `message`.
@@ -229,9 +231,16 @@ mod tests {
             line: 1,
             message: "m".to_string(),
         };
-        let keys = json_keys(&serde_json::to_string(&Finding::new(&error)).unwrap());
+        let line = serde_json::to_string(&Finding::new(&error)).unwrap();
+        let keys = json_keys(&line);
         assert_eq!(keys, ["level", "kind", "path", "line", "message"]);
         let section = reference_section("Findings and summary");
+        // The documented types and constant values, too.
+        check_fields(
+            &field_rows(section, FINDING_KIND),
+            &serde_json::from_str(&line).unwrap(),
+            "a finding",
+        );
         assert_eq!(table_fields(section, FINDING_KIND), keys, "the docs table");
         assert_eq!(
             example_keys(section, FINDING_KIND),
