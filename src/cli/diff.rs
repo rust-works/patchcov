@@ -1765,10 +1765,17 @@ mod tests {
             assert!(err.contains("invalid value '-inf'"), "{flag}: {err}");
             assert!(err.contains("must be a finite number"), "{flag}: {err}");
 
-            assert!(
-                DiffCommand::try_parse_from(["diff", "--report", "r.lcov", flag, "-inf"]).is_err(),
-                "{flag} -inf should be rejected"
-            );
+            // Still a usage error, just not an explained one.
+            for bad in ["-inf", "-nan", "-.5"] {
+                let err = DiffCommand::try_parse_from(["diff", "--report", "r.lcov", flag, bad])
+                    .err()
+                    .unwrap();
+                assert_eq!(
+                    err.kind(),
+                    clap::error::ErrorKind::UnknownArgument,
+                    "{flag} {bad}"
+                );
+            }
         }
     }
 
@@ -1780,6 +1787,8 @@ mod tests {
                 vec!["--fail-on-unmeasured", "src/**"],
                 vec!["--head-ref", "main"],
                 vec!["--no-explanation"],
+                vec!["--fail-under-patch", "80"],
+                vec!["--fail-under-lines", "80"],
                 vec![],
             ] {
                 let mut args = vec!["diff", "--report", "r.lcov", flag];
