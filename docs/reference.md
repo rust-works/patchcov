@@ -168,7 +168,7 @@ parsing the message. `gates` is present only when `kind` is `gate`. It has one e
 gate, in the order below, and each entry's `gate` names the gate and decides its other fields:
 
 ```json
-{"code":1,"kind":"gate","message":"patch coverage 61.11% is below the --fail-under-patch threshold of 80.00%","chain":[],"gates":[{"gate":"fail-under-patch","threshold":80.0,"measured":61.11111111111111}]}
+{"level":"error","code":1,"kind":"gate","message":"patch coverage 61.11% is below the --fail-under-patch threshold of 80.00%","chain":[],"gates":[{"gate":"fail-under-patch","threshold":80.0,"measured":61.11111111111111}]}
 ```
 
 | `gate` | Fields | Meaning |
