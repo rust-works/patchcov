@@ -10,7 +10,7 @@ use serde::Serialize;
 
 use super::diff::{anchor, read_report, ReportFormat};
 use super::exit::{Classify, ExitKind};
-use super::warn::{emit, warn, Warning};
+use super::warn::{emit, warn, Diagnostic, Warning};
 use crate::merge::check_shard;
 use crate::render::pct;
 use crate::{lcov, CoverageReport};
@@ -130,6 +130,16 @@ impl<'a> MergeSummary<'a> {
     }
 }
 
+impl Diagnostic for MergeSummary<'_> {
+    fn level(&self) -> &str {
+        self.level
+    }
+
+    fn kind(&self) -> &str {
+        self.kind
+    }
+}
+
 impl MergeCommand {
     /// Executes the command: merges, writes the file, and reports on stderr.
     ///
@@ -151,7 +161,7 @@ impl MergeCommand {
             pct(outcome.percent),
         );
         let summary = MergeSummary::new(&outcome, &text);
-        emit(SUMMARY_LEVEL, SUMMARY_KIND, &text, &summary);
+        emit(&text, &summary);
         Ok(())
     }
 
@@ -340,6 +350,17 @@ mod tests {
             serde_json::to_string(&summary).unwrap(),
             r#"{"level":"info","kind":"merge-summary","message":"merged 3 report(s)","inputs":3,"output":"out/merged.lcov","files":2,"total_lines":6,"covered_lines":4,"percent":66.66666666666667}"#
         );
+    }
+
+    /// The level and kind the summary reports for the fallback line are the ones
+    /// it serializes.
+    #[test]
+    fn the_summary_names_its_own_level_and_kind() {
+        let summary = MergeSummary::new(&outcome(None), "m");
+        let object = serde_json::to_value(&summary).unwrap();
+        assert_eq!(object["level"], summary.level());
+        assert_eq!(object["kind"], summary.kind());
+        assert_eq!((summary.level(), summary.kind()), ("info", SUMMARY_KIND));
     }
 
     /// The fields, and their order, are what `docs/reference.md` says: the table

@@ -10,7 +10,7 @@ use serde::Serialize;
 
 use super::diff::load_coverage_config;
 use super::exit::{Classify, ExitKind};
-use super::warn::{emit, warn, GlobOrigin, Warning};
+use super::warn::{emit, warn, Diagnostic, GlobOrigin, Warning};
 use crate::config::resolve_config_dir_at;
 use crate::markers;
 
@@ -44,6 +44,16 @@ impl<'a> Finding<'a> {
             line: error.line,
             message: &error.message,
         }
+    }
+}
+
+impl Diagnostic for Finding<'_> {
+    fn level(&self) -> &str {
+        self.level
+    }
+
+    fn kind(&self) -> &str {
+        self.kind
     }
 }
 
@@ -122,12 +132,7 @@ impl LintMarkersCommand {
             };
             let display = path.display().to_string();
             if let Err(error) = markers::scan(&display, &source) {
-                emit(
-                    FINDING_LEVEL,
-                    FINDING_KIND,
-                    error.to_string(),
-                    &Finding::new(&error),
-                );
+                emit(error.to_string(), &Finding::new(&error));
                 failed = true;
             }
         }
@@ -218,6 +223,22 @@ mod tests {
             r#"{"level":"error","kind":"marker-finding","path":"src/a:b.rs","line":12,"message":"needs a \"reason\""}"#
         );
         assert_eq!(error.to_string(), "src/a:b.rs:12: needs a \"reason\"");
+    }
+
+    /// The level and kind a finding reports for the fallback line are the ones
+    /// it serializes.
+    #[test]
+    fn a_finding_names_its_own_level_and_kind() {
+        let error = markers::MarkerError {
+            path: "a.rs".to_string(),
+            line: 1,
+            message: "m".to_string(),
+        };
+        let finding = Finding::new(&error);
+        let object = serde_json::to_value(&finding).unwrap();
+        assert_eq!(object["level"], finding.level());
+        assert_eq!(object["kind"], finding.kind());
+        assert_eq!((finding.level(), finding.kind()), ("error", FINDING_KIND));
     }
 
     /// The fields, and their order, are what `docs/reference.md` says: the table

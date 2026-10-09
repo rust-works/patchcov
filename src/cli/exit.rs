@@ -11,7 +11,7 @@ use std::fmt;
 
 use serde::Serialize;
 
-use super::warn::json_line;
+use super::warn::{json_line, Diagnostic};
 
 /// A class of failure, and the exit code it ends the process with.
 ///
@@ -246,6 +246,16 @@ pub struct ErrorReport {
     pub gates: Option<Vec<GateFailure>>,
 }
 
+impl Diagnostic for ErrorReport {
+    fn level(&self) -> &str {
+        self.level
+    }
+
+    fn kind(&self) -> &str {
+        self.kind
+    }
+}
+
 impl ErrorReport {
     /// The report for `err`.
     pub fn new(err: &anyhow::Error) -> Self {
@@ -278,7 +288,7 @@ impl ErrorReport {
 
     /// The report as a single line of JSON.
     pub fn to_json(&self) -> String {
-        json_line(self, self.level, self.kind, &self.message)
+        json_line(self, &self.message)
     }
 }
 
@@ -389,6 +399,20 @@ mod tests {
         assert_eq!(report.kind, "other");
         assert_eq!(report.message, "boom");
         assert!(report.chain.is_empty());
+    }
+
+    /// The level and kind the report gives for the fallback line are the ones it
+    /// serializes.
+    #[test]
+    fn a_report_names_its_own_level_and_kind() {
+        for report in [
+            ErrorReport::new(&anyhow!("boom")),
+            ErrorReport::usage("bad flag"),
+        ] {
+            let object = serde_json::to_value(&report).unwrap();
+            assert_eq!(object["level"], report.level());
+            assert_eq!(object["kind"], report.kind());
+        }
     }
 
     #[test]
