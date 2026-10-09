@@ -130,7 +130,7 @@ fn first_code(text: &str) -> Option<&str> {
 }
 
 /// A row of a field table: the field, its `Type` cell and its `Meaning` cell.
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Field {
     pub(super) name: String,
     pub(super) ty: String,
@@ -197,6 +197,7 @@ fn conforms(phrase: &str, value: &serde_json::Value) -> bool {
     use serde_json::Value;
     match phrase {
         "string" => value.is_string(),
+        "string or null" => value.is_string() || value.is_null(),
         "number" | "numbers" => value.is_number(),
         "number or null" => value.is_number() || value.is_null(),
         "array of strings" => value
@@ -316,9 +317,9 @@ pub(super) fn gate_rows(section: &str) -> Vec<(String, Vec<(String, String)>)> {
 }
 
 /// The kinds the table headed `kind` in `section` lists, with the fields each
-/// adds, read from the last cell: the first backticked name of each
-/// `;`-separated clause.
-pub(super) fn kind_rows(section: &str) -> Vec<(String, Vec<String>)> {
+/// adds, read from the last cell: each `;`-separated clause starts with
+/// a backticked name and a required `(type)`, followed by its meaning.
+pub(super) fn kind_rows(section: &str) -> Vec<(String, Vec<Field>)> {
     let Some((_, rows)) = tables(section)
         .into_iter()
         .find(|(header, _)| header.first().is_some_and(|h| unticked(h) == "kind"))
@@ -334,9 +335,22 @@ pub(super) fn kind_rows(section: &str) -> Vec<(String, Vec<String>)> {
             let fields = row[2]
                 .split(';')
                 .map(|clause| {
-                    first_code(clause)
-                        .unwrap_or_else(|| panic!("no field name in `{clause}`"))
-                        .to_owned()
+                    let clause = clause.trim();
+                    let (name, rest) = clause
+                        .strip_prefix('`')
+                        .and_then(|rest| rest.split_once('`'))
+                        .unwrap_or_else(|| panic!("no field name in `{clause}`"));
+                    let (ty, meaning) = rest
+                        .trim_start()
+                        .strip_prefix('(')
+                        .and_then(|rest| rest.split_once(')'))
+                        .unwrap_or_else(|| panic!("no field type in `{clause}`"));
+                    assert!(!ty.trim().is_empty(), "empty field type in `{clause}`");
+                    Field {
+                        name: name.to_owned(),
+                        ty: ty.replace('`', "").trim().to_owned(),
+                        meaning: meaning.trim_start_matches(',').trim().to_owned(),
+                    }
                 })
                 .collect();
             (unticked(row[0]).to_owned(), fields)
@@ -391,8 +405,8 @@ text
 
 | `kind` | When | Fields |
 |--------|------|--------|
-| `a` | now | `x`, the x; `y`, the y |
-| `b` | later | `z` |
+| `a` | now | `x` (number), the x (a count); `y` (string or `null`), the y |
+| `b` | later | `z` (array of strings), examples: `one`, `two` |
 
 | `kind` | `code` |
 |--------|-------:|
@@ -446,15 +460,40 @@ other
     }
 
     #[test]
-    fn kind_rows_take_the_first_name_of_each_clause() {
-        let inner = section(SAMPLE, "Inner");
+    fn kind_rows_read_the_name_type_and_meaning_of_each_clause() {
+        let field = |name: &str, ty: &str, meaning: &str| Field {
+            name: name.to_owned(),
+            ty: ty.to_owned(),
+            meaning: meaning.to_owned(),
+        };
         assert_eq!(
-            kind_rows(inner),
+            kind_rows(section(SAMPLE, "Inner")),
             [
-                ("a".to_owned(), vec!["x".to_owned(), "y".to_owned()]),
-                ("b".to_owned(), vec!["z".to_owned()]),
+                (
+                    "a".to_owned(),
+                    vec![
+                        field("x", "number", "the x (a count)"),
+                        field("y", "string or null", "the y"),
+                    ]
+                ),
+                (
+                    "b".to_owned(),
+                    vec![field("z", "array of strings", "examples: `one`, `two`")]
+                ),
             ]
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "no field type")]
+    fn a_warning_field_without_a_type_is_a_failure() {
+        kind_rows(&SAMPLE.replace("`y` (string or `null`)", "`y`"));
+    }
+
+    #[test]
+    #[should_panic(expected = "empty field type")]
+    fn a_warning_field_with_an_empty_type_is_a_failure() {
+        kind_rows(&SAMPLE.replace("`y` (string or `null`)", "`y` ()"));
     }
 
     #[test]
@@ -518,6 +557,8 @@ other
         use serde_json::json;
         let cases = [
             ("string", json!("s"), json!(1)),
+            ("string or null", json!("s"), json!(1)),
+            ("string or null", json!(null), json!([])),
             ("number", json!(1.5), json!(null)),
             ("numbers", json!(2), json!("2")),
             ("number or null", json!(null), json!("x")),

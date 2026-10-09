@@ -555,12 +555,14 @@ mod tests {
             let line = render(ErrorFormat::Json, warning);
             let keys = json_keys(&line);
             // The types and constant values of the common fields.
-            check_fields(&common_rows, &serde_json::from_str(&line).unwrap(), kind);
+            let value = serde_json::from_str(&line).unwrap();
+            check_fields(&common_rows, &value, kind);
             let fields = &documented.iter().find(|(k, _)| k == kind).unwrap().1;
+            check_fields(fields, &value, kind);
             let want: Vec<_> = common
                 .iter()
                 .map(ToString::to_string)
-                .chain(fields.iter().cloned())
+                .chain(fields.iter().map(|field| field.name.clone()))
                 .collect();
             assert_eq!(keys, want, "{kind}: the docs table");
             // The docs show an example for some kinds only.
