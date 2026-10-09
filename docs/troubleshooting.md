@@ -63,9 +63,12 @@ three of the paths it could not match. It exits `7`, not the `1` of a failed cov
 ```text
 Error: coverage report head.lcov: none of its 120 file path(s) matches a tracked file in the
 repository; unmatched normalized paths: `/ci/work/app/src/a.rs`, `/ci/work/app/src/b.rs`,
-`/ci/work/app/src/c.rs`; use --strip-prefix or diff.path-mappings to make paths
+`/ci/work/app/src/c.rs`, and 117 more; use --strip-prefix or diff.path-mappings to make paths
 repo-relative (or pass --allow-path-mismatch / set diff.allow-path-mismatch to warn instead)
 ```
+
+The message lists up to three paths; `, and N more` says how many it left out, and is absent when
+the report has three files or fewer.
 
 Fix the paths with the table below. If a report legitimately matches nothing, pass
 `--allow-path-mismatch` or set `diff.allow-path-mismatch: true` in `.patchcov/config.yaml` to

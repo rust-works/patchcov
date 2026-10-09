@@ -12,7 +12,7 @@
 //! [`Display`](fmt::Display) renders the message from it, so the text and the
 //! JSON fields cannot drift apart.
 
-use std::fmt;
+use std::fmt::{self, Write as _};
 use std::sync::OnceLock;
 
 use serde::ser::SerializeMap;
@@ -97,6 +97,9 @@ impl GlobOrigin {
     }
 }
 
+/// How many unmatched paths a [`Warning::PathMismatch`] samples.
+pub(crate) const PATH_MISMATCH_SAMPLE: usize = 3;
+
 /// A non-fatal problem, with the fields `--error-format json` adds to the
 /// warning object (documented in `docs/reference.md#warnings`).
 ///
@@ -117,9 +120,10 @@ pub enum Warning {
         report: String,
         /// How many file paths the report has.
         file_count: usize,
-        /// The first three of its normalized paths, which the message samples. Every
-        /// path in the report is unmatched, so this is truncated exactly when it is
-        /// shorter than `file_count`.
+        /// The first `PATH_MISMATCH_SAMPLE` (three) of its normalized paths, which
+        /// the message samples. Every path in the report is unmatched, so this is
+        /// truncated exactly when it is shorter than `file_count`, and the message
+        /// then ends the sample with `, and N more`.
         unmatched: Vec<String>,
     },
     /// A shard was measured under a different workspace root (`merge`).
@@ -170,11 +174,15 @@ impl fmt::Display for Warning {
                 file_count,
                 unmatched,
             } => {
-                let sample = unmatched
+                let mut sample = unmatched
                     .iter()
                     .map(|p| format!("`{p}`"))
                     .collect::<Vec<_>>()
                     .join(", ");
+                let more = file_count.saturating_sub(unmatched.len());
+                if more > 0 {
+                    write!(sample, ", and {more} more")?;
+                }
                 write!(
                     f,
                     "coverage report {report}: none of its {file_count} file path(s) matches a tracked file in the repository; unmatched normalized paths: {sample}; use --strip-prefix or diff.path-mappings to make paths repo-relative"
@@ -390,7 +398,8 @@ mod tests {
         assert_eq!(line, r#"{"level":"info","n":null,"message":"two\nlines"}"#);
     }
 
-    /// The messages are unchanged from before the warnings carried fields.
+    /// The messages are unchanged from before the warnings carried fields, except
+    /// that a truncated path-mismatch sample says how many paths it leaves out.
     #[test]
     fn messages_are_unchanged() {
         assert_eq!(
@@ -399,7 +408,18 @@ mod tests {
         );
         assert_eq!(
             path_mismatch().to_string(),
-            "coverage report head.lcov: none of its 4 file path(s) matches a tracked file in the repository; unmatched normalized paths: `a/x.rs`, `a/y.rs`; use --strip-prefix or diff.path-mappings to make paths repo-relative"
+            "coverage report head.lcov: none of its 4 file path(s) matches a tracked file in the repository; unmatched normalized paths: `a/x.rs`, `a/y.rs`, and 2 more; use --strip-prefix or diff.path-mappings to make paths repo-relative"
+        );
+        let complete = Warning::PathMismatch {
+            report: "head.lcov".to_owned(),
+            file_count: 2,
+            unmatched: vec!["a/x.rs".to_owned(), "a/y.rs".to_owned()],
+        };
+        assert!(
+            complete
+                .to_string()
+                .contains("normalized paths: `a/x.rs`, `a/y.rs`; use "),
+            "{complete}"
         );
         assert!(shard_root().to_string().starts_with(
             "coverage shard two.lcov: none of its 3 absolute file path(s) is under `/ci/workspace`, so "

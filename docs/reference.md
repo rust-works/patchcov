@@ -94,7 +94,7 @@ is still printed when a *gate* fails, so a CI job can post it first.
 | `4` | A **source marker is malformed** (`lint-markers`, and `diff` for files in the report) | ``src/m.rs:1: `patchcov: coverage ignore` needs a reason (write ...)``<br>`coverage marker lint failed` |
 | `5` | **Config is bad** | `could not parse coverage config ./.patchcov/config.yaml: ...` (malformed YAML, wrong type, a misspelled `path-mappings` field)<br>`coverage path-mappings destination must be repo-relative without '..': ...`<br>`invalid ignore-filename-regex pattern`<br>`invalid glob ... in --fail-on-unmeasured / diff.require-measured` |
 | `6` | **Git cannot answer** | `could not open git repository at ...`<br>`could not resolve base ref ...`<br>``could not resolve a default base ref (tried `refs/remotes/origin/HEAD`, `origin/main`, `main`, `origin/master`, `master`); pass --base-ref``<br>``could not compute merge-base of `<ref>` and HEAD``<br>``could not read `<path>` from the tree to scan for coverage markers`` (with `--head-ref` or a baseline) |
-| `7` | A **path mismatch** (`diff`): a nonempty report has no path matching a tracked file. With `--allow-path-mismatch` or `diff.allow-path-mismatch` it is only a warning | `coverage report <path>: none of its N file path(s) matches a tracked file in the repository; unmatched normalized paths: ...; use --strip-prefix or diff.path-mappings to make paths repo-relative (or pass --allow-path-mismatch / set diff.allow-path-mismatch to warn instead)` |
+| `7` | A **path mismatch** (`diff`): a nonempty report has no path matching a tracked file. With `--allow-path-mismatch` or `diff.allow-path-mismatch` it is only a warning | `coverage report <path>: none of its N file path(s) matches a tracked file in the repository; unmatched normalized paths: `p1`, `p2`, `p3`[, and M more]; use --strip-prefix or diff.path-mappings to make paths repo-relative (or pass --allow-path-mismatch / set diff.allow-path-mismatch to warn instead)` |
 | `8` | **Any other runtime error** | `could not write merged report to ./out/merged.lcov: No such file or directory`<br>`could not read <path> to scan for coverage markers` (a file in the working tree) |
 
 When one failure fits two rows, the most specific one wins: a config file that cannot be read
@@ -190,7 +190,7 @@ With `--error-format json`, each warning is printed as one JSON line on stderr i
 `warning: ...` line. The text of the message is the same as in the default format.
 
 ```json
-{"level":"warning","kind":"path-mismatch","message":"coverage report ./head.lcov: none of its 1 file path(s) matches a tracked file in the repository; ...","report":"./head.lcov","file_count":1,"unmatched":["nowhere/else.rs"]}
+{"level":"warning","kind":"path-mismatch","message":"coverage report ./head.lcov: none of its 1 file path(s) matches a tracked file in the repository; unmatched normalized paths: `nowhere/else.rs`; use --strip-prefix or diff.path-mappings to make paths repo-relative","report":"./head.lcov","file_count":1,"unmatched":["nowhere/else.rs"]}
 ```
 
 This is `patchcov diff --report head.lcov --allow-path-mismatch` (without `-C`): `report`
@@ -207,7 +207,7 @@ Each `kind` adds fields after `message`, listed below.
 | `kind` | When | Fields besides `level`, `kind` and `message` |
 |--------|------|----------------------------------------------|
 | `deprecated` | A deprecated flag was used (`--format`, `--fail-on-path-mismatch`) | `flag`, the flag with its dashes; `replacement`, what to use instead, or `null` if nothing replaces it |
-| `path-mismatch` | `diff`: a report's paths match no tracked file, and `--allow-path-mismatch` or `diff.allow-path-mismatch` let the run continue | `report`, the report as the message names it ([a display string](#paths-in-warning-fields)); `file_count`, how many file paths it has; `unmatched`, the first three of its normalized paths (the ones the message samples). Every path in the report is unmatched, so the list is truncated exactly when it is shorter than `file_count` (more than three paths) |
+| `path-mismatch` | `diff`: a report's paths match no tracked file, and `--allow-path-mismatch` or `diff.allow-path-mismatch` let the run continue | `report`, the report as the message names it ([a display string](#paths-in-warning-fields)); `file_count`, how many file paths it has; `unmatched`, the first three of its normalized paths (the ones the message samples). Every path in the report is unmatched, so the list is truncated exactly when it is shorter than `file_count` (more than three paths), and the message then ends the sample with `, and N more` |
 | `shard-root` | `merge`: a shard was measured under a different workspace root | `shard`, the shard as the message names it ([a display string](#paths-in-warning-fields)); `strip_prefix`, the prefix it was expected under, without a trailing `/` ([a display string](#paths-in-warning-fields) too); `absolute_paths`, how many absolute file paths it has, none of them under the prefix |
 | `glob-no-match` | `lint-markers`: its globs matched no tracked file, so nothing was checked | `globs`, the globs; `origin`, where they came from: `"--include"` or `"lint-markers.include"` (the config key) |
 

@@ -166,8 +166,8 @@ patchcov diff --report head.lcov \
 After path normalization, `diff` **fails** when a nonempty head report, shard or baseline has
 **no** path that matches a tracked repository file. Such a report cannot be joined to the diff,
 so the patch would look empty and every gate would pass without measuring anything. The error
-names the report, samples up to three unmatched normalized paths, and suggests `--strip-prefix`
-or `diff.path-mappings`. Any single tracked-file match avoids the error, because reports
+names the report, samples up to three unmatched normalized paths (ending with `, and N more`
+when there are others), and suggests `--strip-prefix` or `diff.path-mappings`. Any single tracked-file match avoids the error, because reports
 legitimately name some SDK or vendor files. The check runs before exclusions, so
 `--ignore-filename-regex` cannot hide it. An implicit head is checked against the git index, an
 explicit `--head-ref` against that revision's tree, and the baseline against the base tree.

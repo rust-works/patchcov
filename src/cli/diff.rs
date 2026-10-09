@@ -10,7 +10,7 @@ use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use regex::RegexSet;
 
 use super::exit::{gate_error, Classify, ExitKind, GateFailure};
-use super::warn::{warn, DeprecatedFlag, Warning};
+use super::warn::{warn, DeprecatedFlag, Warning, PATH_MISMATCH_SAMPLE};
 use crate::analysis::{analyze_with_markers, ExcludedFiles, Markers};
 use crate::config::{load_config_content, resolve_config_dir_at};
 use crate::format::resolve as resolve_format;
@@ -461,7 +461,12 @@ impl ReportPathCheck<'_> {
             let warning = Warning::PathMismatch {
                 report: label.display().to_string(),
                 file_count: report.files.len(),
-                unmatched: report.files.keys().take(3).cloned().collect(),
+                unmatched: report
+                    .files
+                    .keys()
+                    .take(PATH_MISMATCH_SAMPLE)
+                    .cloned()
+                    .collect(),
             };
             if self.strict {
                 return Err(ExitKind::PathMismatch.error(format!(
@@ -2745,7 +2750,7 @@ mod tests {
         let warning = outcome.warnings[0].to_string();
         for text in [
             "4 file path(s)",
-            "`wrong/a.rs`, `wrong/b.rs`, `wrong/c.rs`;",
+            "`wrong/a.rs`, `wrong/b.rs`, `wrong/c.rs`, and 1 more;",
         ] {
             assert!(warning.contains(text), "{warning}");
         }
@@ -2777,6 +2782,11 @@ mod tests {
         };
         assert_eq!(*file_count, 3);
         assert_eq!(unmatched.len(), *file_count);
+        let message = outcome.warnings[0].to_string();
+        assert!(
+            message.contains("`wrong/a.rs`, `wrong/b.rs`, `wrong/c.rs`; use "),
+            "{message}"
+        );
     }
 
     #[test]
