@@ -12,7 +12,7 @@
 //! [`Display`](fmt::Display) renders the message from it, so the text and the
 //! JSON fields cannot drift apart.
 
-use std::fmt;
+use std::fmt::{self, Write as _};
 use std::sync::OnceLock;
 
 use serde::ser::SerializeMap;
@@ -179,8 +179,9 @@ impl fmt::Display for Warning {
                     .map(|p| format!("`{p}`"))
                     .collect::<Vec<_>>()
                     .join(", ");
-                if let Some(more) = file_count.checked_sub(unmatched.len()).filter(|n| *n > 0) {
-                    sample.push_str(&format!(", and {more} more"));
+                let more = file_count.saturating_sub(unmatched.len());
+                if more > 0 {
+                    write!(sample, ", and {more} more")?;
                 }
                 write!(
                     f,

@@ -2783,7 +2783,10 @@ mod tests {
         assert_eq!(*file_count, 3);
         assert_eq!(unmatched.len(), *file_count);
         let message = outcome.warnings[0].to_string();
-        assert!(!message.contains("more;"), "{message}");
+        assert!(
+            message.contains("`wrong/a.rs`, `wrong/b.rs`, `wrong/c.rs`; use "),
+            "{message}"
+        );
     }
 
     #[test]
