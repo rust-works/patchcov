@@ -5,13 +5,11 @@
 //!
 //! Anchors follow GitHub's slug rules: the heading text is lowercased, punctuation other than
 //! `-` and `_` is dropped, each space becomes `-`, and a repeated slug gets `-1`, `-2`, ...
-//! The parsing is deliberately small, not a CommonMark parser: it covers the constructs these
-//! files use (ATX headings, inline and reference-style links, `src`/`href` attributes, `<a id>`)
-//! and skips fenced code blocks and inline code. Not supported: setext headings (`Title` over
-//! `=====`), `[text][label]` usage (the definitions are checked), multi-backtick code spans,
-//! parentheses inside a destination, and links in HTML comments.
+//! CommonMark parsing handles headings, links and images while skipping code and HTML comments.
+//! Raw HTML support covers double-quoted `src`/`href` attributes and `<a id>` / `<a name>`.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -24,107 +22,107 @@ macro_rules! regex {
     };
 }
 
-regex!(LINK_TEXT, r"\[([^\]]*)\]\([^)]*\)");
-regex!(HTML_TAG, r"<[^>]*>");
-regex!(CLOSING_HASHES, r"\s+#+\s*$");
-regex!(HEADING, r"^ {0,3}#{1,6}\s+(.*)$");
+regex!(SLUG_PUNCTUATION, r"[^\p{L}\p{N}\p{M}_ -]");
 regex!(EXPLICIT_ANCHOR, r#"<a\s[^>]*?(?:id|name)\s*=\s*"([^"]*)""#);
-regex!(INLINE_CODE, r"`[^`]*`");
-regex!(INLINE_LINK, r"\]\(\s*(<[^>]*>|[^)\s]*)");
-// A footnote definition (`[^1]: text`) is not a link definition.
-regex!(LINK_DEFINITION, r"^ {0,3}\[[^\]^][^\]]*\]:\s*(<[^>]*>|\S+)");
 regex!(HTML_ATTRIBUTE, r#"\b(?:src|href)\s*=\s*"([^"]*)""#);
 regex!(URL_SCHEME, r"^[A-Za-z][A-Za-z0-9+.-]*:");
 
-/// The lines of a markdown file that are prose: fenced code blocks are dropped. Each line is
-/// paired with its 1-based number.
-fn prose_lines(text: &str) -> Vec<(usize, &str)> {
-    // The open fence: its character and length. A closing fence repeats the character at least
-    // as many times and carries no info string.
-    let mut fence: Option<(char, usize)> = None;
-    let mut lines = Vec::new();
-    for (index, line) in text.lines().enumerate() {
-        let trimmed = line.trim_start();
-        let marker = trimmed
-            .chars()
-            .next()
-            .filter(|c| matches!(c, '`' | '~'))
-            .map(|c| (c, trimmed.chars().take_while(|&x| x == c).count()))
-            .filter(|&(_, length)| length >= 3);
-        match (fence, marker) {
-            (None, Some(open)) => fence = Some(open),
-            (None, None) => lines.push((index + 1, line)),
-            (Some((c, length)), Some((found, count)))
-                if found == c && count >= length && trimmed.trim_end().chars().all(|x| x == c) =>
-            {
-                fence = None;
-            }
-            (Some(_), _) => {}
-        }
-    }
-    lines
-}
-
-/// GitHub's anchor for a heading's text, before any `-1` suffix for a duplicate.
+/// GitHub's anchor for rendered heading text, before any duplicate suffix.
 fn slug(heading: &str) -> String {
-    let text = LINK_TEXT.replace_all(heading, "$1");
-    let text = HTML_TAG.replace_all(&text, "");
-    let text = CLOSING_HASHES.replace(text.trim(), "");
-    text.chars()
-        .filter(|c| !matches!(c, '`' | '*'))
-        .flat_map(char::to_lowercase)
-        .filter_map(|c| match c {
-            ' ' => Some('-'),
-            '-' | '_' => Some(c),
-            c if c.is_alphanumeric() => Some(c),
-            _ => None,
-        })
-        .collect()
+    SLUG_PUNCTUATION
+        .replace_all(&heading.to_lowercase(), "")
+        .replace(' ', "-")
 }
 
-/// Every anchor a markdown file defines: its headings, and explicit `<a id>` / `<a name>`.
-fn anchors(text: &str) -> HashSet<String> {
-    // As GitHub numbers duplicates: while the slug is taken, count up from the heading's own
-    // slug. A generated `notes-1` therefore also blocks a heading that slugs to `notes-1`.
-    let mut taken: HashMap<String, usize> = HashMap::new();
-    let mut found = HashSet::new();
-    for (_, line) in prose_lines(text) {
-        if let Some(caps) = HEADING.captures(line) {
-            let base = slug(&caps[1]);
-            let mut result = base.clone();
-            while taken.contains_key(&result) {
-                let count = taken.entry(base.clone()).or_insert(0);
-                *count += 1;
-                result = format!("{base}-{count}");
-            }
-            taken.insert(result.clone(), 0);
-            found.insert(result);
-        }
-        for caps in EXPLICIT_ANCHOR.captures_iter(line) {
-            found.insert(caps[1].to_string());
+/// Non-comment slices of a raw HTML event, with offsets within the event. Block HTML can be
+/// split into several events, so carry comment state across them. Offsets preserve diagnostics.
+fn html_prose<'a>(html: &'a str, in_comment: &mut bool) -> Vec<(usize, &'a str)> {
+    let mut found = Vec::new();
+    let mut offset = 0;
+    while offset < html.len() {
+        let remaining = &html[offset..];
+        if *in_comment {
+            let Some(end) = remaining.find("-->") else {
+                break;
+            };
+            offset += end + 3;
+            *in_comment = false;
+        } else if let Some(start) = remaining.find("<!--") {
+            found.push((offset, &remaining[..start]));
+            offset += start + 4;
+            *in_comment = true;
+        } else {
+            found.push((offset, remaining));
+            break;
         }
     }
     found
 }
 
-/// Every link destination in a markdown file, with its line number. Covers `[text](dest)`,
-/// `![alt](dest)`, `[label]: dest` and `src="dest"` / `href="dest"`.
+/// Every anchor a markdown file defines: its headings, and explicit `<a id>` / `<a name>`.
+fn anchors(text: &str) -> HashSet<String> {
+    // A generated `notes-1` also blocks a heading that slugs to `notes-1`.
+    let mut taken: HashMap<String, usize> = HashMap::new();
+    let mut found = HashSet::new();
+    let mut heading = None::<String>;
+    let mut in_comment = false;
+    for event in Parser::new(text) {
+        match event {
+            Event::Start(Tag::Heading { .. }) => heading = Some(String::new()),
+            Event::Text(value) | Event::Code(value) => {
+                if let Some(heading) = &mut heading {
+                    heading.push_str(&value);
+                }
+            }
+            Event::SoftBreak | Event::HardBreak => {
+                if let Some(heading) = &mut heading {
+                    heading.push(' ');
+                }
+            }
+            Event::End(TagEnd::Heading(_)) => {
+                let base = slug(&heading.take().unwrap());
+                let mut result = base.clone();
+                while taken.contains_key(&result) {
+                    let count = taken.entry(base.clone()).or_insert(0);
+                    *count += 1;
+                    result = format!("{base}-{count}");
+                }
+                taken.insert(result.clone(), 0);
+                found.insert(result);
+            }
+            Event::Html(html) | Event::InlineHtml(html) => {
+                for (_, prose) in html_prose(&html, &mut in_comment) {
+                    for caps in EXPLICIT_ANCHOR.captures_iter(prose) {
+                        found.insert(caps[1].to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    found
+}
+
+/// Every rendered link/image destination, with the 1-based source line of its usage.
+/// Unused reference definitions are not links. Raw HTML src/href attributes are also checked.
 fn destinations(text: &str) -> Vec<(usize, String)> {
     let mut found = Vec::new();
-    for (number, line) in prose_lines(text) {
-        let line = INLINE_CODE.replace_all(line, "");
-        let mut push = |dest: &str| {
-            let dest = dest.trim_start_matches('<').trim_end_matches('>');
-            found.push((number, dest.to_string()));
-        };
-        for caps in INLINE_LINK.captures_iter(&line) {
-            push(&caps[1]);
-        }
-        if let Some(caps) = LINK_DEFINITION.captures(&line) {
-            push(&caps[1]);
-        }
-        for caps in HTML_ATTRIBUTE.captures_iter(&line) {
-            push(&caps[1]);
+    let mut in_comment = false;
+    let line_at = |offset| text[..offset].bytes().filter(|&b| b == b'\n').count() + 1;
+    for (event, range) in Parser::new(text).into_offset_iter() {
+        match event {
+            Event::Start(Tag::Link { dest_url, .. } | Tag::Image { dest_url, .. }) => {
+                found.push((line_at(range.start), dest_url.into_string()));
+            }
+            Event::Html(html) | Event::InlineHtml(html) => {
+                for (offset, prose) in html_prose(&html, &mut in_comment) {
+                    for caps in HTML_ATTRIBUTE.captures_iter(prose) {
+                        let start = range.start + offset + caps.get(0).unwrap().start();
+                        found.push((line_at(start), caps[1].to_string()));
+                    }
+                }
+            }
+            _ => {}
         }
     }
     found
@@ -251,6 +249,10 @@ fn documentation(root: &Path) -> Vec<PathBuf> {
         entries.sort();
         for path in entries {
             let relative = path.strip_prefix(root).unwrap().to_path_buf();
+            // Do not follow directory cycles or include symlinked files.
+            if path.is_symlink() {
+                continue;
+            }
             if path.is_dir() {
                 walk(root, &relative, into);
             } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
@@ -279,9 +281,9 @@ fn relative_links_and_anchors_in_the_documentation_resolve() {
 #[test]
 fn slugs_follow_githubs_rules() {
     assert_eq!(slug("Exit codes"), "exit-codes");
-    assert_eq!(slug("`patchcov.config.yaml`"), "patchcovconfigyaml");
+    assert_eq!(slug("patchcov.config.yaml"), "patchcovconfigyaml");
     assert_eq!(
-        slug("`--diff-allow-path-mismatch`"),
+        slug("--diff-allow-path-mismatch"),
         "--diff-allow-path-mismatch"
     );
     assert_eq!(
@@ -290,8 +292,6 @@ fn slugs_follow_githubs_rules() {
     );
     assert_eq!(slug("project_delta"), "project_delta");
     assert_eq!(slug("Tests & fixtures"), "tests--fixtures");
-    assert_eq!(slug("A [link](x.md) in a heading"), "a-link-in-a-heading");
-    assert_eq!(slug("Closed ##"), "closed");
     assert_eq!(slug("Über Café"), "über-café");
 }
 
@@ -326,7 +326,8 @@ fn code_blocks_define_no_anchors_and_contain_no_links() {
 #[test]
 fn every_kind_of_destination_is_found() {
     let text = "[a](one.md) ![b](two.svg \"title\") [c](<three four.md>)\n\
-                [ref]: four.md\n\
+                [used][ref]\n\n\
+                [ref]: four.md\n\n\
                 <img src=\"five.png\"> <a href=\"six.md#x\">six</a>\n";
     let found: Vec<_> = destinations(text).into_iter().map(|(_, d)| d).collect();
     assert_eq!(
@@ -381,4 +382,110 @@ fn dead_links_and_anchors_are_reported() {
         problems[3].contains("README.md:13") && problems[3].contains("`docs/A.md` does not exist")
     );
     assert!(problems[4].contains("a.md:3") && problems[4].contains("no heading `#Title`"));
+}
+
+#[test]
+fn commonmark_headings_use_rendered_text_and_preserve_combining_marks() {
+    let text = "Setext *title*\n==============\n\nSecond\n------\n\n\
+                # A [link](x.md) and `code` with <em>HTML</em> &amp; an ![image](x.png)\n\
+                # Closed ##\n\
+                # Cafe\u{301} İ\n";
+    assert_eq!(
+        anchors(text),
+        HashSet::from([
+            "setext-title".into(),
+            "second".into(),
+            "a-link-and-code-with-html--an-image".into(),
+            "closed".into(),
+            "cafe\u{301}-i\u{307}".into(),
+        ])
+    );
+}
+
+#[test]
+fn reference_links_and_parenthesized_destinations_have_usage_lines() {
+    let text = "[full][label] ![image][label]\n\
+                [label][] [label]\n\
+                [nested](file(a(b)).md) [escaped](file\\(c\\).md)\n\n\
+                [label]: <target (one).md> \"a title\"\n\
+                [unused]: missing.md\n";
+    assert_eq!(
+        destinations(text),
+        vec![
+            (1, "target (one).md".into()),
+            (1, "target (one).md".into()),
+            (2, "target (one).md".into()),
+            (2, "target (one).md".into()),
+            (3, "file(a(b)).md".into()),
+            (3, "file(c).md".into()),
+        ]
+    );
+}
+
+#[test]
+fn multi_backtick_and_multiline_code_spans_and_indented_code_are_skipped() {
+    let text = concat!(
+        "Use `` `[example](missing.md)` `` and ``across\n",
+        "[example](missing.md) ` lines``.\n\n",
+        "    # Not a heading\n",
+        "    [example](missing.md)\n\n",
+        "[live](real.md)\n",
+    );
+    assert!(anchors(text).is_empty());
+    assert_eq!(destinations(text), vec![(7, "real.md".into())]);
+}
+
+#[test]
+fn html_comments_define_no_anchors_and_contain_no_links() {
+    let text = "<!--\n\
+                # Hidden\n\
+                [missing](missing.md) <a id=\"hidden\" href=\"missing.md\">\n\
+                -->\n\n\
+                # Visible <!-- <a id=\"also-hidden\" href=\"missing.md\"> --> title\n\n\
+                <!-- hidden --> <a id=\"live\" href=\"real.md\">live</a>\n\
+                <img\n src=\"real.png\">\n";
+    assert_eq!(
+        anchors(text),
+        HashSet::from(["visible--title".into(), "live".into()])
+    );
+    assert_eq!(
+        destinations(text),
+        vec![(8, "real.md".into()), (10, "real.png".into())]
+    );
+}
+
+#[test]
+fn commonmark_links_resolve_and_report_dead_reference_usages() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::write(root.join("target(one).md"), "Cafe\u{301}\n=====\n").unwrap();
+    fs::write(
+        root.join("README.md"),
+        "[good][target]\n[bad][dead]\n\n[target]: target(one).md#cafe%CC%81\n[dead]: missing.md\n[unused]: also-missing.md\n",
+    ).unwrap();
+    assert_eq!(
+        check(root, &[PathBuf::from("README.md")]),
+        vec!["README.md:2: `missing.md` does not exist"]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn documentation_walk_skips_symlinks_including_cycles() {
+    use std::os::unix::fs::symlink;
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("docs/sub")).unwrap();
+    fs::write(root.join("docs/sub/real.md"), "# Real\n").unwrap();
+    symlink(root.join("docs"), root.join("docs/sub/cycle")).unwrap();
+    symlink(root.join("docs/sub/real.md"), root.join("docs/link.md")).unwrap();
+    assert_eq!(
+        documentation(root),
+        vec![
+            PathBuf::from("README.md"),
+            PathBuf::from("CONTRIBUTING.md"),
+            PathBuf::from("docs/sub/real.md")
+        ]
+    );
 }
