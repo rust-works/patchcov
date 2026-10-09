@@ -1,4 +1,4 @@
-//! Relative links and `#anchors` in `README.md`, `CONTRIBUTING.md` and `docs/` must resolve.
+//! Relative links and `#anchors` in tracked markdown (except root `CHANGELOG.md`) must resolve.
 //! A renamed heading or a moved file otherwise breaks them silently. The check is offline: it
 //! reads the markdown and the repository tree, and ignores external URLs, so it cannot flake
 //! on the network. It runs wherever `cargo test --all-targets` does, which includes CI.
@@ -14,6 +14,7 @@ use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::process::Command;
 use std::sync::LazyLock;
 
 macro_rules! regex {
@@ -239,29 +240,32 @@ fn check(root: &Path, files: &[PathBuf]) -> Vec<String> {
     problems
 }
 
-/// `README.md`, `CONTRIBUTING.md` and every markdown file under `docs/`, relative to `root`.
+/// Every tracked `.md` file except the generated root `CHANGELOG.md`, relative to `root`.
 fn documentation(root: &Path) -> Vec<PathBuf> {
-    fn walk(root: &Path, dir: &Path, into: &mut Vec<PathBuf>) {
-        let mut entries: Vec<_> = fs::read_dir(root.join(dir))
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .collect();
-        entries.sort();
-        for path in entries {
-            let relative = path.strip_prefix(root).unwrap().to_path_buf();
-            // Do not follow directory cycles or include symlinked files.
-            if path.is_symlink() {
-                continue;
-            }
-            if path.is_dir() {
-                walk(root, &relative, into);
-            } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
-                into.push(relative);
-            }
-        }
-    }
-    let mut files = vec![PathBuf::from("README.md"), PathBuf::from("CONTRIBUTING.md")];
-    walk(root, Path::new("docs"), &mut files);
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["ls-files", "-z"])
+        .output()
+        .expect("git is required to discover tracked documentation");
+    assert!(
+        output.status.success(),
+        "git ls-files failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let paths = String::from_utf8(output.stdout).expect("tracked paths must be UTF-8");
+    let mut files: Vec<_> = paths
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .filter(|path| {
+            path.extension().and_then(|e| e.to_str()) == Some("md")
+                && path != Path::new("CHANGELOG.md")
+                // Do not include tracked symlinks, which may point outside the repository.
+                && !root.join(path).is_symlink()
+        })
+        .collect();
+    files.sort();
     files
 }
 
@@ -269,12 +273,70 @@ fn documentation(root: &Path) -> Vec<PathBuf> {
 fn relative_links_and_anchors_in_the_documentation_resolve() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let files = documentation(&root);
-    assert!(files.len() > 2, "found no documentation under docs/");
+    assert!(!files.is_empty(), "found no tracked markdown documentation");
     let problems = check(&root, &files);
     assert!(
         problems.is_empty(),
         "dead links in the documentation:\n{}",
         problems.join("\n")
+    );
+}
+
+#[test]
+fn documentation_covers_tracked_markdown_across_the_repository() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let mut expected = vec![
+        PathBuf::from("README.md"),
+        PathBuf::from("CONTRIBUTING.md"),
+        PathBuf::from("docs/guide.md"),
+        PathBuf::from("tests/fixtures/non-rust/README.md"),
+        PathBuf::from(".github/review.md"),
+        PathBuf::from("docs/CHANGELOG.md"),
+        PathBuf::from("docs/with spaces.md"),
+    ];
+    // Windows forbids newlines in filenames; on Unix they must survive Git's output intact.
+    #[cfg(unix)]
+    expected.push(PathBuf::from("docs/with\nnewline.md"));
+    for file in &expected {
+        fs::create_dir_all(root.join(file).parent().unwrap()).unwrap();
+        fs::write(root.join(file), "# Title\n\n[home](/README.md#title)\n").unwrap();
+    }
+    fs::write(root.join("CHANGELOG.md"), "[broken](missing.md)\n").unwrap();
+    fs::write(root.join("other.txt"), "[broken](missing.md)\n").unwrap();
+    fs::write(root.join(".gitignore"), "target/\n").unwrap();
+    for args in [vec!["init"], vec!["add", "."]] {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    fs::write(root.join("untracked.md"), "[broken](missing.md)\n").unwrap();
+    fs::create_dir(root.join("target")).unwrap();
+    fs::write(root.join("target/ignored.md"), "[broken](missing.md)\n").unwrap();
+
+    expected.sort();
+    let files = documentation(root);
+    assert_eq!(files, expected);
+    assert!(check(root, &files).is_empty());
+
+    // The discovered list must feed the checker, including newly covered directories.
+    fs::write(root.join(".github/review.md"), "[broken](missing.md)\n").unwrap();
+    let problems = check(root, &documentation(root));
+    assert_eq!(problems.len(), 1, "{problems:#?}");
+    assert_eq!(
+        problems[0],
+        format!(
+            "{}:1: `missing.md` does not exist",
+            Path::new(".github/review.md").display()
+        )
     );
 }
 
@@ -471,7 +533,7 @@ fn commonmark_links_resolve_and_report_dead_reference_usages() {
 
 #[cfg(unix)]
 #[test]
-fn documentation_walk_skips_symlinks_including_cycles() {
+fn documentation_skips_tracked_symlinks() {
     use std::os::unix::fs::symlink;
 
     let dir = tempfile::tempdir().unwrap();
@@ -480,12 +542,19 @@ fn documentation_walk_skips_symlinks_including_cycles() {
     fs::write(root.join("docs/sub/real.md"), "# Real\n").unwrap();
     symlink(root.join("docs"), root.join("docs/sub/cycle")).unwrap();
     symlink(root.join("docs/sub/real.md"), root.join("docs/link.md")).unwrap();
-    assert_eq!(
-        documentation(root),
-        vec![
-            PathBuf::from("README.md"),
-            PathBuf::from("CONTRIBUTING.md"),
-            PathBuf::from("docs/sub/real.md")
-        ]
-    );
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["init"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["add", "."])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(documentation(root), vec![PathBuf::from("docs/sub/real.md")]);
 }
