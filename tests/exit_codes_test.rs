@@ -10,6 +10,10 @@ use std::process::{Command, Output};
 use git2::{Repository, Signature};
 use tempfile::TempDir;
 
+#[allow(dead_code)]
+#[path = "../src/cli/doc_fields.rs"]
+mod doc_fields;
+
 /// A repository with a base commit and a head commit that adds `a.rs` lines 2-5
 /// and a new `b.rs`.
 struct Fixture {
@@ -551,6 +555,21 @@ fn a_json_gate_error_has_the_gates_as_data() {
     ]);
     assert_eq!(code(&output), 1, "{}", stderr(&output));
     let value = report(&output);
+    assert_eq!(value["kind"], "gate", "{value}");
+    let emitted: Vec<_> = value["gates"]
+        .as_array()
+        .expect("gate error must have a gates array")
+        .iter()
+        .map(|gate| gate["gate"].as_str().expect("gate name must be a string"))
+        .collect();
+    let documented: Vec<_> = doc_fields::gate_rows(doc_fields::reference_section("Error output"))
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    assert_eq!(
+        emitted, documented,
+        "gate order must match docs/reference.md: {value}"
+    );
     assert_eq!(
         value["gates"],
         serde_json::json!([
