@@ -258,16 +258,23 @@ fn render(format: ErrorFormat, warning: &Warning) -> String {
 
 /// `record` as one line of JSON, or a minimal object if it cannot be serialized.
 ///
-/// The minimal object has `level`, `kind` and `message`.
+/// The minimal object has the record's own `level` and `kind`, and `message`. A
+/// record that needs more to survive uses [`json_line_or`].
+pub(super) fn json_line(record: &impl Diagnostic, message: &str) -> String {
+    json_line_or(
+        record,
+        json!({ "level": record.level(), "kind": record.kind(), "message": message }),
+    )
+}
+
+/// `record` as one line of JSON, or `fallback` if it cannot be serialized.
 ///
 /// Every record holds strings, numbers and lists today, which always serialize.
 /// The fallback keeps a record added later with a fallible `Serialize` (a map with
 /// non-string keys, say) from turning its diagnostic into a blank stderr line. It
-/// is built from strings, so it cannot fail itself.
-pub(super) fn json_line(record: &impl Diagnostic, message: &str) -> String {
-    serde_json::to_string(record).unwrap_or_else(|_| {
-        json!({ "level": record.level(), "kind": record.kind(), "message": message }).to_string()
-    })
+/// should be built from strings and numbers, so that it cannot fail itself.
+pub(super) fn json_line_or(record: &impl Serialize, fallback: serde_json::Value) -> String {
+    serde_json::to_string(record).unwrap_or_else(|_| fallback.to_string())
 }
 
 /// The line `emit` prints, the one place that picks between the formats.
