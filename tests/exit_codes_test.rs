@@ -911,6 +911,42 @@ fn shard_warning_labels_preserve_input_arguments() {
 }
 
 #[test]
+fn empty_shard_errors_preserve_the_input_label() {
+    let fx = Fixture::new();
+    fx.report();
+    fx.file("empty.lcov", "SF:a.rs\nend_of_record\n");
+    for (cwd, global) in input_label_cases(&fx) {
+        for subcommand in ["diff", "merge"] {
+            for format in ["text", "json"] {
+                let mut args = global.clone();
+                args.push(subcommand);
+                if subcommand == "diff" {
+                    args.extend([
+                        "--base-ref",
+                        &fx.base,
+                        "--report",
+                        "head.lcov",
+                        "--report",
+                        "./empty.lcov",
+                    ]);
+                } else {
+                    args.extend(["-o", "merged.lcov", "./empty.lcov"]);
+                }
+                args.extend(["--error-format", format]);
+                let output = command(cwd).args(&args).output().unwrap();
+                assert_eq!(code(&output), 3, "{args:?}: {}", stderr(&output));
+                assert!(
+                    stderr(&output).contains("coverage shard ./empty.lcov has no executable lines"),
+                    "{args:?}: {}",
+                    stderr(&output)
+                );
+                assert!(!fx.root().join("merged.lcov").exists());
+            }
+        }
+    }
+}
+
+#[test]
 fn strict_path_mismatch_preserves_the_input_label() {
     let fx = Fixture::new();
     fx.file(
