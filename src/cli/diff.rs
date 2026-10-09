@@ -2608,6 +2608,67 @@ mod tests {
     }
 
     #[test]
+    fn path_mismatch_troubleshooting_example_matches_error() {
+        use std::fmt::Write as _;
+
+        use crate::cli::doc_fields::section;
+
+        let (_dir, repo, base) = repo_with_added_file();
+        // A bare repo has no workdir prefix to strip, preserving the absolute
+        // normalized paths shown in the troubleshooting example.
+        let bare = repo.join("bare.git");
+        git2::build::RepoBuilder::new()
+            .bare(true)
+            .clone(repo.to_str().unwrap(), &bare)
+            .unwrap();
+        let report = repo.join("head.lcov");
+        let mut lcov = String::new();
+        for name in ["a.rs", "b.rs", "c.rs"]
+            .map(String::from)
+            .into_iter()
+            .chain((0..117).map(|i| format!("remaining-{i:03}.rs")))
+        {
+            writeln!(lcov, "SF:/ci/work/app/src/{name}\nDA:1,1\nend_of_record").unwrap();
+        }
+        fs::write(&report, lcov).unwrap();
+        let error = command(report.clone(), &base)
+            .run(Some(&bare))
+            .err()
+            .expect("unmatched report paths must fail in strict mode");
+        assert_eq!(crate::cli::exit::code(&error), 7);
+
+        let troubleshooting = include_str!("../../docs/troubleshooting.md");
+        let body = section(troubleshooting, "No files match the diff");
+        let mut lines = body.lines();
+        assert!(
+            lines.any(|line| line == "```text"),
+            "docs/troubleshooting.md: missing path-mismatch text example"
+        );
+        let mut example = Vec::new();
+        loop {
+            let line = lines
+                .next()
+                .expect("docs/troubleshooting.md: unclosed path-mismatch text example");
+            if line == "```" {
+                break;
+            }
+            example.push(line.trim());
+        }
+        let message = example.join(" ");
+        // main adds `Error: `; the pipeline labels the report with the supplied
+        // absolute path, whereas the docs use the portable `head.lcov` label.
+        let documented_error = message
+            .strip_prefix("Error: coverage report head.lcov: ")
+            .expect("docs/troubleshooting.md: unexpected error prefix or report label");
+        let expected = format!("coverage report {}: {documented_error}", report.display());
+        assert_eq!(
+            format!("{error:#}"),
+            expected,
+            "docs/troubleshooting.md: path-mismatch example differs from the strict pipeline error"
+        );
+    }
+
+    #[test]
     fn path_mismatch_error_names_the_opt_out() {
         let (_dir, repo, base) = repo_with_added_file();
         let bad = repo.join("bad.lcov");
