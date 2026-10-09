@@ -190,8 +190,11 @@ With `--error-format json`, each warning is printed as one JSON line on stderr i
 `warning: ...` line. The text of the message is the same as in the default format.
 
 ```json
-{"level":"warning","kind":"path-mismatch","message":"coverage report head.lcov: none of its 1 file path(s) matches a tracked file in the repository; ...","report":"head.lcov","file_count":1,"unmatched":["nowhere/else.rs"]}
+{"level":"warning","kind":"path-mismatch","message":"coverage report ./head.lcov: none of its 1 file path(s) matches a tracked file in the repository; ...","report":"./head.lcov","file_count":1,"unmatched":["nowhere/else.rs"]}
 ```
+
+This is `patchcov diff --report head.lcov --allow-path-mismatch` (without `-C`): `report`
+is `./head.lcov`, not the `head.lcov` that was typed ([why](#paths-in-warning-fields)).
 
 | Field | Type | Meaning |
 |-------|------|---------|
@@ -208,7 +211,8 @@ Each `kind` adds fields after `message`, listed below.
 | `shard-root` | `merge`: a shard was measured under a different workspace root | `shard`, the shard as the message names it ([a display string](#paths-in-warning-fields)); `strip_prefix`, the prefix it was expected under, without a trailing `/` ([a display string](#paths-in-warning-fields) too); `absolute_paths`, how many absolute file paths it has, none of them under the prefix |
 | `glob-no-match` | `lint-markers`: its globs matched no tracked file, so nothing was checked | `globs`, the globs; `origin`, where they came from: `"--include"` or `"lint-markers.include"` (the config key) |
 
-Another example, a shard under another root:
+Another example, a shard under another root, from `patchcov merge --strip-prefix /ci/workspace -o merged.lcov two.lcov`
+(without `-C`, `merge` names the shard as typed):
 
 ```json
 {"level":"warning","kind":"shard-root","message":"coverage shard two.lcov: none of its 1 absolute file path(s) is under `/ci/workspace`, so ...","shard":"two.lcov","strip_prefix":"/ci/workspace","absolute_paths":1}
@@ -231,9 +235,21 @@ message prints for them (`strip_prefix` without its trailing `/`), not path iden
 must be UTF-8, so in a path that is not valid UTF-8 each invalid sequence of bytes is replaced with
 one U+FFFD (the replacement character). The value may then name no file that exists, and two
 different paths can give the same value. They are also the path as patchcov resolved it, which can
-differ from the argument as typed (a relative path may be joined to the repository root), so do
-not match them against your own argument text; keep track of which report or shard you ran
-instead. No lossless form of these paths is emitted today: non-UTF-8 report or shard paths are
+differ from the argument as typed, so do not match them against your own argument text; keep
+track of which report or shard you ran instead. A relative path is joined to the directory
+patchcov works in, written as given:
+
+| Run | A relative `head.lcov` is named | Example |
+|-----|--------------------------------|---------|
+| `diff` without `-C` | joined to `.` | `./head.lcov` |
+| `diff -C <dir>` | joined to `<dir>` | `<dir>/head.lcov` |
+| `merge` without `-C` | as typed | `head.lcov` |
+| `merge -C <dir>` | joined to `<dir>` | `<dir>/head.lcov` |
+
+An absolute path is always kept as typed. The join uses the platform's separator, so on Windows
+the first row is `.\head.lcov`.
+
+No lossless form of these paths is emitted today: non-UTF-8 report or shard paths are
 rare, and a field for them can be added later without changing the existing ones. `unmatched` is
 not affected: it holds the file paths read from inside the report, which are already strings.
 

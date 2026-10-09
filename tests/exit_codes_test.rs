@@ -101,18 +101,26 @@ fn commit(
 
 /// Runs `patchcov -C <root> <head...> <args...>`.
 fn run(root: &Path, head: &[&str], args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_patchcov"))
-        // Keep an ambient override out of the run.
-        .env_remove("PATCHCOV_CONFIG_DIR")
-        .env_remove("PATCHCOV_ERROR_FORMAT")
-        // A temp directory inside a checkout must not make `root` look like part of it.
-        .env("GIT_CEILING_DIRECTORIES", root.parent().unwrap())
+    command(root)
         .arg("-C")
         .arg(root)
         .args(head)
         .args(args)
         .output()
         .unwrap()
+}
+
+/// The binary, isolated from the environment, to be run from `cwd`.
+fn command(cwd: &Path) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_patchcov"));
+    command
+        // Keep an ambient override out of the run.
+        .env_remove("PATCHCOV_CONFIG_DIR")
+        .env_remove("PATCHCOV_ERROR_FORMAT")
+        // A temp directory inside a checkout must not make `cwd` look like part of it.
+        .env("GIT_CEILING_DIRECTORIES", cwd.parent().unwrap())
+        .current_dir(cwd);
+    command
 }
 
 fn code(output: &Output) -> i32 {
@@ -803,6 +811,95 @@ fn an_allowed_path_mismatch_is_a_json_warning() {
             "unmatched": ["nowhere/else.rs"],
         }),
     );
+}
+
+/// The single warning of `patchcov <args>` run in `cwd` (no `-C` unless `args` has
+/// one), as its JSON object and as its text line; the two must name the same thing.
+fn warning_in(cwd: &Path, args: &[&str]) -> (serde_json::Value, String) {
+    let text = command(cwd).args(args).output().unwrap();
+    let json = command(cwd)
+        .args(args)
+        .args(["--error-format", "json"])
+        .output()
+        .unwrap();
+    assert_eq!(code(&text), 0, "{args:?}: {}", stderr(&text));
+    assert_eq!(code(&json), 0, "{args:?}: {}", stderr(&json));
+    let (mut objects, mut lines) = (json_warnings(&json), text_warnings(&text));
+    assert_eq!(objects.len(), 1, "{args:?}: {}", stderr(&json));
+    assert_eq!(lines.len(), 1, "{args:?}: {}", stderr(&text));
+    let (object, line) = (objects.remove(0), lines.remove(0));
+    assert_eq!(object["message"], line, "{args:?}");
+    (object, line)
+}
+
+/// `docs/reference.md#paths-in-warning-fields`: a relative report is named with the
+/// directory patchcov works in joined to it, so `report` is not the argument as typed,
+/// and it is the string the message names.
+#[test]
+fn a_relative_report_is_named_joined_to_the_working_directory() {
+    let fx = Fixture::new();
+    fx.file("head.lcov", "SF:nowhere/else.rs\nDA:1,1\nend_of_record\n");
+    let dir = fx.root().file_name().unwrap().to_str().unwrap();
+    let diff = ["diff", "--base-ref", &fx.base, "--allow-path-mismatch"];
+    let cases: [(&Path, Vec<&str>, PathBuf); 3] = [
+        // No `-C`: joined to `.`.
+        (fx.root(), vec![], Path::new(".").join("head.lcov")),
+        // `-C <dir>`, as typed: absolute here, relative to the parent there.
+        (
+            fx.root(),
+            vec!["-C", fx.root().to_str().unwrap()],
+            fx.root().join("head.lcov"),
+        ),
+        (
+            fx.root().parent().unwrap(),
+            vec!["-C", dir],
+            Path::new(dir).join("head.lcov"),
+        ),
+    ];
+    for (cwd, global, named) in cases {
+        let mut args = global.clone();
+        args.extend(diff);
+        args.extend(["--report", "head.lcov"]);
+        let (object, line) = warning_in(cwd, &args);
+        let named = named.display().to_string();
+        assert_eq!(object["report"], named, "{global:?}");
+        assert!(
+            line.starts_with(&format!("coverage report {named}: ")),
+            "{global:?}: {line}"
+        );
+    }
+}
+
+/// `merge` names a relative shard as typed unless it is given `-C`.
+#[test]
+fn a_relative_shard_is_named_as_typed_unless_merge_has_c() {
+    let fx = Fixture::new();
+    fx.file("two.lcov", "SF:/other/runner/a.rs\nDA:1,1\nend_of_record\n");
+    let merge = [
+        "--strip-prefix",
+        "/ci/workspace",
+        "-o",
+        "merged.lcov",
+        "two.lcov",
+    ];
+    let root = fx.root().to_str().unwrap();
+    let cases = [
+        (vec!["merge"], "two.lcov".to_owned()),
+        (
+            vec!["-C", root, "merge"],
+            fx.root().join("two.lcov").display().to_string(),
+        ),
+    ];
+    for (head, named) in cases {
+        let mut args = head.clone();
+        args.extend(merge);
+        let (object, line) = warning_in(fx.root(), &args);
+        assert_eq!(object["shard"], named, "{head:?}");
+        assert!(
+            line.starts_with(&format!("coverage shard {named}: ")),
+            "{head:?}: {line}"
+        );
+    }
 }
 
 #[test]
