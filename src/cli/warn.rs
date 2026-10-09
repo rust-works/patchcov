@@ -298,8 +298,8 @@ fn render_line(format: ErrorFormat, text: &str, record: &impl Diagnostic) -> Str
 mod tests {
     use super::*;
     use crate::cli::doc_fields::{
-        assert_every_variant, check_fields, example_keys, first_table_rows, json_keys, kind_rows,
-        reference_section,
+        assert_every_variant, check_fields, example_keys, example_line, first_table_rows,
+        json_keys, kind_rows, reference_section, section,
     };
 
     fn path_mismatch() -> Warning {
@@ -308,6 +308,69 @@ mod tests {
             file_count: 4,
             unmatched: vec!["a/x.rs".to_owned(), "a/y.rs".to_owned()],
         }
+    }
+
+    #[test]
+    fn path_mismatch_reference_example_matches_display() {
+        #[derive(serde::Deserialize)]
+        struct Example {
+            report: String,
+            file_count: usize,
+            unmatched: Vec<String>,
+            message: String,
+        }
+
+        let line = example_line(reference_section("Warnings"), "path-mismatch")
+            .expect("docs/reference.md: missing path-mismatch JSON example");
+        let example: Example = serde_json::from_str(line).unwrap();
+        let warning = Warning::PathMismatch {
+            report: example.report,
+            file_count: example.file_count,
+            unmatched: example.unmatched,
+        };
+        assert_eq!(
+            example.message,
+            warning.to_string(),
+            "docs/reference.md: path-mismatch message differs from Display"
+        );
+    }
+
+    #[test]
+    fn path_mismatch_troubleshooting_example_matches_display() {
+        let troubleshooting = include_str!("../../docs/troubleshooting.md");
+        let body = section(troubleshooting, "No files match the diff");
+        let mut lines = body.lines();
+        assert!(
+            lines.any(|line| line == "```text"),
+            "docs/troubleshooting.md: missing path-mismatch text example"
+        );
+        let mut example = Vec::new();
+        loop {
+            let line = lines
+                .next()
+                .expect("docs/troubleshooting.md: unclosed path-mismatch text example");
+            if line == "```" {
+                break;
+            }
+            example.push(line.trim());
+        }
+        let message = example.join(" ");
+        let warning = Warning::PathMismatch {
+            report: "head.lcov".to_owned(),
+            file_count: 120,
+            unmatched: [
+                "/ci/work/app/src/a.rs",
+                "/ci/work/app/src/b.rs",
+                "/ci/work/app/src/c.rs",
+            ]
+            .map(String::from)
+            .to_vec(),
+        };
+        assert_eq!(
+            message,
+            format!("Error: {warning} (or pass --allow-path-mismatch / set diff.allow-path-mismatch to warn instead)"),
+            "docs/troubleshooting.md: path-mismatch message differs from Display with exit-7 guidance"
+        );
     }
 
     /// The number of `Warning` variants, as [`variant_ordinal`] counts them.
