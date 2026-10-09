@@ -1297,10 +1297,10 @@ fn diff_subdirectory_go_module_and_warning_labels_use_their_own_roots() {
         "SF:missing.rs\nDA:1,1\nend_of_record\n",
     );
     let sub = fx.root().join("sub");
-    for (cwd, global, anchor) in [
-        (sub.as_path(), vec![], PathBuf::from(".")),
-        (fx.root(), vec!["-C", "sub"], PathBuf::from("sub")),
-        (fx.root(), vec!["-C", path(&sub)], sub.clone()),
+    for (cwd, global) in [
+        (sub.as_path(), vec![]),
+        (fx.root(), vec!["-C", "sub"]),
+        (fx.root(), vec!["-C", path(&sub)]),
     ] {
         let output = command(cwd)
             .env("GIT_CEILING_DIRECTORIES", fx.root().parent().unwrap())
@@ -1340,7 +1340,7 @@ fn diff_subdirectory_go_module_and_warning_labels_use_their_own_roots() {
         assert_eq!(code(&output), 0, "{}", stderr(&output));
         let warnings = json_warnings(&output);
         assert_eq!(warnings.len(), 1);
-        let label = anchor.join("mismatch.lcov").display().to_string();
+        let label = "mismatch.lcov";
         assert_eq!(warnings[0]["report"], label);
         assert!(warnings[0]["message"]
             .as_str()
