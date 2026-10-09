@@ -13,10 +13,14 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# In the 50 available release runs, binaries took at most 145 s; allow 20 minutes
+# for cold builds. A release-plz source-install fallback took 474 s, so both jobs
+# using that action get 30 minutes (about 4x that duration).
 jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     if: ${{ github.repository_owner == 'rust-works' }}
     permissions:
       # Push tags and create releases.
@@ -47,6 +51,7 @@ jobs:
     needs: release
     if: ${{ needs.release.outputs.releases_created == 'true' }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     permissions:
       contents: write
     strategy:
@@ -121,6 +126,7 @@ jobs:
   pr:
     name: Release PR
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     if: ${{ github.repository_owner == 'rust-works' }}
     permissions:
       # Push to the release PR branch, and create and update the PR.

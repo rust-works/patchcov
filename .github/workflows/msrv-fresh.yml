@@ -29,6 +29,8 @@ jobs:
   msrv-fresh:
     name: MSRV (1.88, fresh resolution)
     runs-on: ubuntu-latest
+    # No historical runs yet; allow 15 minutes for the uncached release-mode install.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.88.0
