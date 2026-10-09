@@ -104,8 +104,17 @@ capping the dependency in `Cargo.toml`, or by raising the MSRV on purpose.
 [`.patchcov/config.yaml`](.patchcov/config.yaml) limits it to Rust sources, so prose in
 documentation that describes the marker syntax is not flagged.
 
-If you changed documentation, check that relative links and `#anchors` in `README.md`,
-`CONTRIBUTING.md` and `docs/` still resolve; CI does not.
+CI also checks that relative links and `#anchors` in `README.md`, `CONTRIBUTING.md` and
+`docs/` still resolve, as part of `cargo test --all-targets`. After a documentation change,
+run it on its own with:
+
+```bash
+cargo test --test doc_links_test
+```
+
+It is offline: it reads the markdown, applies GitHub's heading-slug rules and ignores external
+URLs. Fragments are checked only against markdown targets, so `src/lib.rs#L10` is not. Links
+inside code blocks and code spans are skipped.
 
 ## Merging
 
