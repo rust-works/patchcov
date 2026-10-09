@@ -339,13 +339,22 @@ mod tests {
     fn path_mismatch_troubleshooting_example_matches_display() {
         let troubleshooting = include_str!("../../docs/troubleshooting.md");
         let body = section(troubleshooting, "No files match the diff");
-        let (_, fenced) = body
-            .split_once("```text\n")
-            .expect("docs/troubleshooting.md: missing path-mismatch text example");
-        let (example, _) = fenced
-            .split_once("\n```")
-            .expect("docs/troubleshooting.md: unclosed path-mismatch text example");
-        let message = example.lines().map(str::trim).collect::<Vec<_>>().join(" ");
+        let mut lines = body.lines();
+        assert!(
+            lines.any(|line| line == "```text"),
+            "docs/troubleshooting.md: missing path-mismatch text example"
+        );
+        let mut example = Vec::new();
+        loop {
+            let line = lines
+                .next()
+                .expect("docs/troubleshooting.md: unclosed path-mismatch text example");
+            if line == "```" {
+                break;
+            }
+            example.push(line.trim());
+        }
+        let message = example.join(" ");
         let warning = Warning::PathMismatch {
             report: "head.lcov".to_owned(),
             file_count: 120,
