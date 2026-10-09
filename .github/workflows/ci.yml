@@ -10,10 +10,15 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# Every job sets `timeout-minutes`: the default is 6 hours, and a hung test would otherwise hold a
+# required check until the merge queue gives up at 60 minutes. The limits are several times the
+# slowest run seen over the last 100 runs (113 s, Windows test); the jobs that run tests get 15,
+# the build-only ones 10.
 jobs:
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -28,6 +33,7 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -41,6 +47,7 @@ jobs:
   msrv:
     name: MSRV (1.88)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.88.0
@@ -51,6 +58,7 @@ jobs:
   docs:
     name: Docs
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     env:
       RUSTDOCFLAGS: -D warnings
     steps:
