@@ -56,14 +56,15 @@ patchcov joins report file names to git's repo-relative paths. Nothing matches w
 names files some other way, and the symptom is patch coverage that is empty or low while the
 overall total is fine, plus the changed files listed under "Touched files absent from every
 coverage report". When *no* path in a report matches a tracked file, patchcov fails the run
-(exit 1) rather than report an empty patch that every gate would pass, naming the report and a
-few of the paths it could not match:
+rather than report an empty patch that every gate would pass, naming the report and the first
+three of the paths it could not match. It exits `7`, not the `1` of a failed coverage gate (see
+[exit codes](reference.md#exit-codes)), so a script can tell the two apart:
 
 ```text
 Error: coverage report head.lcov: none of its 120 file path(s) matches a tracked file in the
-repository; unmatched normalized paths: `/ci/work/app/src/a.rs`, ...; use --strip-prefix or
-diff.path-mappings to make paths repo-relative (or pass --allow-path-mismatch / set
-diff.allow-path-mismatch to warn instead)
+repository; unmatched normalized paths: `/ci/work/app/src/a.rs`, `/ci/work/app/src/b.rs`,
+`/ci/work/app/src/c.rs`; use --strip-prefix or diff.path-mappings to make paths
+repo-relative (or pass --allow-path-mismatch / set diff.allow-path-mismatch to warn instead)
 ```
 
 Fix the paths with the table below. If a report legitimately matches nothing, pass
