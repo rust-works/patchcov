@@ -200,8 +200,8 @@ impl MergeCommand {
             _ => repo_root.unwrap_or_else(|| Path::new(".")),
         };
         for path in &self.report {
-            let path = resolve(path, repo_root);
-            let mut report = read_report(&path, self.report_format, root)?;
+            let resolved = resolve(path, repo_root);
+            let mut report = read_report(&resolved, self.report_format, root)?;
             // Unlike `patchcov diff`, a lone input is checked too: a merge's
             // output is trusted by whatever reads it next, and nothing else
             // would notice it came from a run that measured nothing.
@@ -234,8 +234,8 @@ impl MergeCommand {
     }
 }
 
-/// `path` anchored to `repo_root`, or exactly as given when there is none, so a
-/// message names a file the way the user typed it.
+/// `path` anchored to `repo_root`, or exactly as given when there is none,
+/// for filesystem access. Diagnostic labels use the original input argument.
 fn resolve(path: &Path, repo_root: Option<&Path>) -> PathBuf {
     repo_root.map_or_else(|| path.to_path_buf(), |root| anchor(path, root))
 }

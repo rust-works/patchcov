@@ -194,11 +194,11 @@ With `--error-format json`, each warning is printed as one JSON line on stderr i
 `warning: ...` line. The text of the message is the same as in the default format.
 
 ```json
-{"level":"warning","kind":"path-mismatch","message":"coverage report ./head.lcov: none of its 1 file path(s) matches a tracked file in the repository; unmatched normalized paths: `nowhere/else.rs`; use --strip-prefix or diff.path-mappings to make paths repo-relative","report":"./head.lcov","file_count":1,"unmatched":["nowhere/else.rs"]}
+{"level":"warning","kind":"path-mismatch","message":"coverage report head.lcov: none of its 1 file path(s) matches a tracked file in the repository; unmatched normalized paths: `nowhere/else.rs`; use --strip-prefix or diff.path-mappings to make paths repo-relative","report":"head.lcov","file_count":1,"unmatched":["nowhere/else.rs"]}
 ```
 
-This is `patchcov diff --report head.lcov --allow-path-mismatch` (without `-C`): `report`
-is `./head.lcov`, not the `head.lcov` that was typed ([why](#paths-in-warning-fields)).
+This is `patchcov diff --report head.lcov --allow-path-mismatch`: `report` is the
+argument `head.lcov`, including when `-C` is supplied ([details](#paths-in-warning-fields)).
 
 | Field | Type | Meaning |
 |-------|------|---------|
@@ -238,20 +238,27 @@ that start with `{` and keep the objects that have a `level`.
 message prints for them (`strip_prefix` without its trailing `/`), not path identifiers. JSON strings
 must be UTF-8, so in a path that is not valid UTF-8 each invalid sequence of bytes is replaced with
 one U+FFFD (the replacement character). The value may then name no file that exists, and two
-different paths can give the same value. They are also the path as patchcov resolved it, which can
-differ from the argument as typed, so do not match them against your own argument text; keep
-track of which report or shard you ran instead. A relative path is joined to the directory
-patchcov works in, written as given:
+different paths can give the same value.
+
+`report` and `shard` preserve the input argument as typed, including a leading `./`, for both
+commands. This applies to head reports, baseline reports and shards. Wrappers can match these
+fields against their UTF-8 input arguments. `-C` affects where a relative file is read, but does
+not change its diagnostic label:
 
 | Run | A relative `head.lcov` is named | Example |
 |-----|--------------------------------|---------|
-| `diff` without `-C` | joined to `.` | `./head.lcov` |
-| `diff -C <dir>` | joined to `<dir>` | `<dir>/head.lcov` |
+| `diff` without `-C` | as typed | `head.lcov` |
+| `diff -C <dir>` | as typed | `head.lcov` |
 | `merge` without `-C` | as typed | `head.lcov` |
-| `merge -C <dir>` | joined to `<dir>` | `<dir>/head.lcov` |
+| `merge -C <dir>` | as typed | `head.lcov` |
 
-An absolute path is always kept as typed. The join uses the platform's separator, so on Windows
-the first row is `.\head.lcov`.
+An absolute input path is also kept as typed. Relative inputs are still read relative to `-C`
+(or the current directory when it is omitted). Path-mismatch errors use the same report label
+as warnings. `strip_prefix` describes the effective prefix, which can be inferred from the
+repository; it is not necessarily an argument as typed.
+
+Earlier versions named `diff` reports joined to `-C` (or `.`) and `merge` shards joined to `-C`
+when supplied. Consumers that expected those anchored labels should match input arguments instead.
 
 No lossless form of these paths is emitted today: non-UTF-8 report or shard paths are
 rare, and a field for them can be added later without changing the existing ones. `unmatched` is
