@@ -163,7 +163,7 @@ pub struct DiffCommand {
     pub format: Option<OutputFormatArg>,
 
     /// Fail (non-zero exit) when patch coverage is below this percentage.
-    #[arg(long, value_name = "PCT", value_parser = finite_percentage, allow_hyphen_values = true)]
+    #[arg(long, value_name = "PCT", value_parser = finite_percentage, allow_negative_numbers = true)]
     pub fail_under_patch: Option<f64>,
 
     /// Fail when a touched file absent from every report matches this repo-relative glob.
@@ -180,7 +180,7 @@ pub struct DiffCommand {
     /// `cargo llvm-cov report --summary-only`. A report with no executable lines
     /// fails the gate: there is nothing to measure, and passing would let an
     /// empty report slip through.
-    #[arg(long, value_name = "PCT", value_parser = finite_percentage, allow_hyphen_values = true)]
+    #[arg(long, value_name = "PCT", value_parser = finite_percentage, allow_negative_numbers = true)]
     pub fail_under_lines: Option<f64>,
 
     /// Warn, instead of failing, when a nonempty head, shard or baseline report
@@ -1751,23 +1751,49 @@ mod tests {
     }
 
     #[test]
-    fn negative_infinity_threshold_reaches_the_value_parser() {
+    fn negative_infinity_threshold_is_refused_in_both_spellings() {
         use clap::Parser;
-        // Not a "negative number" to clap, so it needs `allow_hyphen_values` to
-        // get the same explanation as the other bad values rather than
-        // `unexpected argument '-i'`.
-        let err = DiffCommand::try_parse_from([
-            "diff",
-            "--report",
-            "r.lcov",
-            "--fail-under-lines",
-            "-inf",
-        ])
-        .err()
-        .unwrap()
-        .to_string();
-        assert!(err.contains("invalid value '-inf'"), "{err}");
-        assert!(err.contains("must be a finite number"), "{err}");
+        // clap does not count `-inf` as a negative number, so the space-separated
+        // form is `unexpected argument '-i'`; the `=` form still gets the
+        // explanation. That is the price of `a value is required` below.
+        for flag in ["--fail-under-patch", "--fail-under-lines"] {
+            let joined = format!("{flag}=-inf");
+            let err = DiffCommand::try_parse_from(["diff", "--report", "r.lcov", &joined])
+                .err()
+                .unwrap()
+                .to_string();
+            assert!(err.contains("invalid value '-inf'"), "{flag}: {err}");
+            assert!(err.contains("must be a finite number"), "{flag}: {err}");
+
+            assert!(
+                DiffCommand::try_parse_from(["diff", "--report", "r.lcov", flag, "-inf"]).is_err(),
+                "{flag} -inf should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn a_missing_threshold_value_is_not_blamed_on_the_next_argument() {
+        use clap::Parser;
+        for flag in ["--fail-under-patch", "--fail-under-lines"] {
+            for rest in [
+                vec!["--fail-on-unmeasured", "src/**"],
+                vec!["--head-ref", "main"],
+                vec!["--no-explanation"],
+                vec![],
+            ] {
+                let mut args = vec!["diff", "--report", "r.lcov", flag];
+                args.extend(rest.iter());
+                let err = DiffCommand::try_parse_from(&args)
+                    .err()
+                    .unwrap()
+                    .to_string();
+                assert!(
+                    err.contains(&format!("a value is required for '{flag} <PCT>'")),
+                    "{args:?}: {err}"
+                );
+            }
+        }
     }
 
     #[test]
