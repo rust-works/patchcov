@@ -11,7 +11,7 @@ use std::fmt;
 
 use serde::Serialize;
 
-use super::warn::{json_line, Diagnostic};
+use super::warn::{json_line_or, Diagnostic};
 
 /// A class of failure, and the exit code it ends the process with.
 ///
@@ -288,7 +288,24 @@ impl ErrorReport {
 
     /// The report as a single line of JSON.
     pub fn to_json(&self) -> String {
-        json_line(self, &self.message)
+        self.json_with(self)
+    }
+
+    /// `record` as the line, or this report's [`fallback`](Self::fallback) if it
+    /// cannot be serialized. `to_json` passes the report itself.
+    fn json_with(&self, record: &impl Serialize) -> String {
+        json_line_or(record, self.fallback())
+    }
+
+    /// The report without `chain` and `gates`, for a line that cannot be
+    /// serialized in full: the exit code, class and message still reach a wrapper.
+    fn fallback(&self) -> serde_json::Value {
+        serde_json::json!({
+            "level": self.level,
+            "code": self.code,
+            "kind": self.kind,
+            "message": self.message,
+        })
     }
 }
 
@@ -777,5 +794,31 @@ mod tests {
         seen.sort_unstable();
         seen.dedup();
         assert_eq!(seen, documented_names);
+    }
+
+    /// A record whose serialization fails, as a map with non-string keys would.
+    struct Fails;
+
+    impl Serialize for Fails {
+        fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
+            Err(serde::ser::Error::custom("not serializable"))
+        }
+    }
+
+    /// What survives when the full report cannot be serialized: the exit code
+    /// still reaches a wrapper, with the class and the message.
+    #[test]
+    fn fallback_keeps_level_code_kind_and_message() {
+        let err = ExitKind::Config.error("bad config");
+        let config = ErrorReport::new(&err);
+        assert_eq!(
+            config.json_with(&Fails),
+            r#"{"code":5,"kind":"config","level":"error","message":"bad config"}"#
+        );
+        let usage = ErrorReport::usage("bad flag");
+        assert_eq!(
+            usage.json_with(&Fails),
+            r#"{"code":2,"kind":"usage","level":"error","message":"bad flag"}"#
+        );
     }
 }
