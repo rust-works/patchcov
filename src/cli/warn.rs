@@ -328,13 +328,18 @@ mod tests {
         message: &'static str,
     }
 
-    impl Diagnostic for Record {
-        fn level(&self) -> &str {
-            self.level
+    /// Any record, with the labels of the fallback line fixed.
+    #[derive(Serialize)]
+    #[serde(transparent)]
+    struct Labelled<T>(T);
+
+    impl<T: Serialize> Diagnostic for Labelled<T> {
+        fn level(&self) -> &'static str {
+            "info"
         }
 
         fn kind(&self) -> &'static str {
-            "k"
+            "thing"
         }
     }
 
@@ -346,7 +351,7 @@ mod tests {
             message: "ignored",
         };
         assert_eq!(
-            render_line(ErrorFormat::Text, "as is: 1", &record),
+            render_line(ErrorFormat::Text, "as is: 1", &Labelled(record)),
             "as is: 1"
         );
     }
@@ -359,7 +364,7 @@ mod tests {
             n: None,
             message: "two\nlines",
         };
-        let line = render_line(ErrorFormat::Json, "unused", &record);
+        let line = render_line(ErrorFormat::Json, "unused", &Labelled(record));
         assert_eq!(line, r#"{"level":"info","n":null,"message":"two\nlines"}"#);
     }
 
@@ -517,16 +522,6 @@ mod tests {
     /// A record whose serialization fails, as a map with non-string keys would.
     struct Fails;
 
-    impl Diagnostic for Fails {
-        fn level(&self) -> &'static str {
-            "info"
-        }
-
-        fn kind(&self) -> &'static str {
-            "thing"
-        }
-    }
-
     impl Serialize for Fails {
         fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
             Err(serde::ser::Error::custom("not serializable"))
@@ -536,7 +531,7 @@ mod tests {
     /// A record that cannot be serialized still leaves its text, as one JSON line.
     #[test]
     fn emit_json_falls_back_to_the_text_when_the_record_fails() {
-        let line = render_line(ErrorFormat::Json, "two \"quoted\"\nlines", &Fails);
+        let line = render_line(ErrorFormat::Json, "two \"quoted\"\nlines", &Labelled(Fails));
         assert_eq!(
             line,
             r#"{"kind":"thing","level":"info","message":"two \"quoted\"\nlines"}"#
@@ -550,7 +545,7 @@ mod tests {
             n: Some(1),
             message: "m",
         };
-        let line = json_line(&record, "unused");
+        let line = json_line(&Labelled(record), "unused");
         assert_eq!(line, r#"{"level":"info","n":1,"message":"m"}"#);
     }
 
