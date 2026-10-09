@@ -805,6 +805,95 @@ fn an_allowed_path_mismatch_is_a_json_warning() {
     );
 }
 
+/// The single JSON warning of `patchcov <args>` run in `cwd` without `-C`.
+fn json_warning_without_c(cwd: &Path, args: &[&str]) -> serde_json::Value {
+    let output = Command::new(env!("CARGO_BIN_EXE_patchcov"))
+        .env_remove("PATCHCOV_CONFIG_DIR")
+        .env_remove("PATCHCOV_ERROR_FORMAT")
+        .env("GIT_CEILING_DIRECTORIES", cwd.parent().unwrap())
+        .current_dir(cwd)
+        .args(args)
+        .args(["--error-format", "json"])
+        .output()
+        .unwrap();
+    assert_eq!(code(&output), 0, "{args:?}: {}", stderr(&output));
+    let mut warnings = json_warnings(&output);
+    assert_eq!(warnings.len(), 1, "{args:?}: {}", stderr(&output));
+    warnings.remove(0)
+}
+
+/// `docs/reference.md#paths-in-warning-fields`: a relative report is named with the
+/// directory patchcov works in joined to it, so `report` is not the argument as typed,
+/// and it is the same string the message names.
+#[test]
+fn a_relative_report_is_named_joined_to_the_working_directory() {
+    let fx = Fixture::new();
+    fx.file("head.lcov", "SF:nowhere/else.rs\nDA:1,1\nend_of_record\n");
+    let diff = ["diff", "--base-ref", &fx.base, "--report", "head.lcov"];
+
+    // Without `-C`: joined to `.`.
+    let mut args = diff.to_vec();
+    args.push("--allow-path-mismatch");
+    let named = Path::new(".").join("head.lcov").display().to_string();
+    let warning = json_warning_without_c(fx.root(), &args);
+    assert_eq!(warning["report"], named);
+    assert!(
+        warning["message"]
+            .as_str()
+            .unwrap()
+            .starts_with(&format!("coverage report {named}: ")),
+        "{warning}"
+    );
+
+    // With `-C <dir>`: joined to `<dir>`.
+    let output = run(fx.root(), &diff[..], &["--allow-path-mismatch"]);
+    let named = fx.root().join("head.lcov").display().to_string();
+    let json = run(
+        fx.root(),
+        &diff[..],
+        &["--allow-path-mismatch", "--error-format", "json"],
+    );
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    let warnings = json_warnings(&json);
+    assert_eq!(warnings.len(), 1, "{}", stderr(&json));
+    assert_eq!(warnings[0]["report"], named);
+    assert!(text_warnings(&output)[0].starts_with(&format!("coverage report {named}: ")));
+}
+
+/// `merge` names a relative shard as typed unless it is given `-C`.
+#[test]
+fn a_relative_shard_is_named_as_typed_unless_merge_has_c() {
+    let fx = Fixture::new();
+    fx.file("two.lcov", "SF:/other/runner/a.rs\nDA:1,1\nend_of_record\n");
+    let merge = [
+        "merge",
+        "--strip-prefix",
+        "/ci/workspace",
+        "-o",
+        "merged.lcov",
+        "two.lcov",
+    ];
+
+    let warning = json_warning_without_c(fx.root(), &merge);
+    assert_eq!(warning["shard"], "two.lcov");
+    assert!(
+        warning["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("coverage shard two.lcov: "),
+        "{warning}"
+    );
+
+    let json = run(fx.root(), &merge, &["--error-format", "json"]);
+    assert_eq!(code(&json), 0, "{}", stderr(&json));
+    let warnings = json_warnings(&json);
+    assert_eq!(warnings.len(), 1, "{}", stderr(&json));
+    assert_eq!(
+        warnings[0]["shard"],
+        fx.root().join("two.lcov").display().to_string()
+    );
+}
+
 #[test]
 fn a_deprecated_flag_is_a_json_warning() {
     let fx = Fixture::new();
