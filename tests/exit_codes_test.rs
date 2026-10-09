@@ -1289,6 +1289,10 @@ fn diff_subdirectory_go_module_and_warning_labels_use_their_own_roots() {
         "mode: set\nexample.com/project/a.rs:2.1,3.1 1 1\n",
     );
     fx.file(
+        "sub/base.cover",
+        "mode: set\nexample.com/project/a.rs:1.1,1.10 1 1\n",
+    );
+    fx.file(
         "sub/mismatch.lcov",
         "SF:missing.rs\nDA:1,1\nend_of_record\n",
     );
@@ -1307,6 +1311,8 @@ fn diff_subdirectory_go_module_and_warning_labels_use_their_own_roots() {
                 &fx.base,
                 "--report",
                 "head.cover",
+                "--baseline-report",
+                "base.cover",
                 "--output",
                 "json",
             ])
@@ -1315,6 +1321,7 @@ fn diff_subdirectory_go_module_and_warning_labels_use_their_own_roots() {
         assert_eq!(code(&output), 0, "{global:?}: {}", stderr(&output));
         let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(json["patch_coverage"]["covered"], 2);
+        assert_eq!(json["project_delta"]["total_before"], 100.0);
         let output = command(cwd)
             .env("GIT_CEILING_DIRECTORIES", fx.root().parent().unwrap())
             .args(&global)
