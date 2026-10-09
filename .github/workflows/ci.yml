@@ -10,6 +10,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# Every job sets `timeout-minutes`: the default is 6 hours, and a hung test would otherwise hold a
+# required check until the merge queue gives up at 60 minutes. The limits are about ten times the
+# slowest run seen (~76 s, Windows test); the jobs that run tests get 15, the build-only ones 10.
 jobs:
   test:
     name: Test (${{ matrix.os }})
