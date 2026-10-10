@@ -55,7 +55,6 @@ report so the per-file table appears:
 >
 > </details>
 >
-> <sub>Full per-file summary is attached as the **coverage-summary** build artifact.</sub>
 
 Without `--baseline-report` there is no delta on the `Total` line, no per-file table and no
 indirect changes; a "No baseline available yet" notice stands in for them and the patch

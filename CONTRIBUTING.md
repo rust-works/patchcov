@@ -116,6 +116,9 @@ PR head, builds its debug `patchcov` binary with the lockfile, then measures tha
 checkout with cargo-llvm-cov. The local binary renders a separate sticky comment and
 enforces 90% patch coverage and 95% overall line coverage. Its report is also in the
 run summary and the `coverage-pr-build` artifact, including when a coverage gate fails.
+The posted comment and run summary link directly to that artifact, labeled as LCOV and
+Markdown. The archived comment includes the run link; the direct artifact link is added
+after upload, when its URL is available.
 Fork PRs skip the comment and still get the summary, artifact and gates. This job is not
 in the ruleset or required-check list and is skipped on pushes and merge groups.
 

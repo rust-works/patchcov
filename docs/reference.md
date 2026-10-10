@@ -60,9 +60,15 @@ use the repository working directory.
 | `--ignore-filename-regex <REGEX>` | Exclude matching files from both reports (repeatable or comma-separated); unioned with `diff.ignore-filename-regex` |
 | `--config-dir <PATH>` | Directory searched for `config.yaml` (default: the discovered `.patchcov/`, honouring `PATCHCOV_CONFIG_DIR`) |
 | `--artifact-url <URL>` | Link to the full coverage-summary artifact, in the markdown footer |
-| `--run-url <URL>` | Link to the CI run, in the markdown footer |
+| `--run-url <URL>` | Link to the CI run, in the markdown footer, independently of `--artifact-url` |
 | `--commit-url <URL>` | Commit-URL prefix for linking SHAs |
 | `--base-sha <SHA>` / `--head-sha <SHA>` | SHAs shown in the markdown `Comparing` line (both are needed for the line to appear) |
+
+Markdown reports omit artifact guidance when no nonempty artifact URL is supplied. An explicit
+`--artifact-url` (or `COVERAGE_ARTIFACT_URL`) is labeled as a full per-file coverage summary;
+only use it for an artifact containing that summary. A run URL renders even without an
+artifact URL. Without `--baseline-report`, per-file deltas and indirect coverage changes
+are unavailable; the report makes no assumptions about CI baseline publication.
 
 For both `--fail-under-*` flags, space-separated negative float values such as `-inf`,
 `-nan` and `-.5` receive the same explanatory usage error as the `--flag=value` spelling.
