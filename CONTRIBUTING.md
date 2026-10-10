@@ -104,9 +104,9 @@ CI's `Coverage` job runs [action-works/patchcov-action](https://github.com/actio
 on pull requests, so patchcov measures itself with the workflow it recommends. It posts a sticky
 comment with the patch coverage and the uncovered new lines, fails below 90% patch coverage or 95%
 overall line coverage, and on a push to `main` publishes the baseline that later pull requests are
-compared with. Like the scheduled workflow above it is advisory: it is not in the ruleset or the
-list below, so a red run does not block a merge. It is skipped on `merge_group`, where the action
-would only repeat the instrumented tests. The job grants `actions: read` as well as
+compared with. `Coverage` is required, so a red run blocks a merge. It is skipped on
+`merge_group`, where the action would only repeat the instrumented tests; the skipped job
+satisfies the queue's required check. The job grants `actions: read` as well as
 `pull-requests: write` because the baseline is another run's artifact. Pull requests from forks
 get a read-only token, so the job sets `comment: false` for them: the gates still apply, and the
 numbers are in the run's Summary tab.
@@ -156,7 +156,7 @@ merges. A failed or timed-out queue entry is removed; fix the failure and select
 Merge when ready again. Do not push changes directly to `main`.
 
 The following GitHub Actions checks are required on both the PR and its queue
-entry. Keep their names and the `merge_group` trigger in
+entry (Coverage passes as skipped in the queue). Keep their names and the `merge_group` trigger in
 [CI](.github/workflows/ci.yml) in sync with the ruleset:
 
 - `Test (ubuntu-latest)`
@@ -165,6 +165,7 @@ entry. Keep their names and the `merge_group` trigger in
 - `Lint`
 - `MSRV (1.88)`
 - `Docs`
+- `Coverage`
 
 The queue starts with one PR building and merging at a time, merge commits,
 `ALLGREEN` validation, and a 60-minute check timeout. The minimum group size is
@@ -217,8 +218,8 @@ After enabling or changing the ruleset:
 
 1. Select **Merge when ready** on a reviewed, passing PR, such as a documentation
    change. Confirm it enters the queue.
-2. In Actions, find the CI run triggered by `merge_group` and confirm all six
-   required checks pass with the names above.
+2. In Actions, find the CI run triggered by `merge_group` and confirm all seven
+   required checks pass with the names above (Coverage is skipped; the other six succeed).
 3. Confirm the queue merges the PR into `main` with a merge commit.
 4. Find the Release workflow triggered by that push. Confirm `Release` and
    `Release PR` succeed and inspect the release PR that release-plz opens or

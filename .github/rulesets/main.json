@@ -49,6 +49,10 @@
           {
             "context": "Docs",
             "integration_id": 15368
+          },
+          {
+            "context": "Coverage",
+            "integration_id": 15368
           }
         ],
         "strict_required_status_checks_policy": false
