@@ -95,3 +95,78 @@ jobs:
           fail-under-lines: 95
           # A fork's token is read-only, so the comment would fail; the gates still apply.
           comment: ${{ github.event.pull_request.head.repo.fork != true }}
+
+  # Exercise the PR's own CLI as well as the released action above. Advisory and PR-only:
+  # no baseline recompute or publish, so this report has no deltas/indirect changes.
+  coverage-pr-build:
+    name: Coverage (PR build)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: coverage-pr-build
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Build the PR's patchcov
+        run: cargo build --locked --bin patchcov
+      - name: Measure the PR head
+        run: |
+          cargo llvm-cov --locked --all-features --workspace --no-report
+          cargo llvm-cov report --lcov --output-path coverage-pr-head.lcov
+      - name: Render with the PR's patchcov
+        id: diff
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          base=$(git merge-base "$BASE_SHA" "$HEAD_SHA")
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          ./target/debug/patchcov diff --report coverage-pr-head.lcov \
+            --base-ref "$base" --head-ref "$HEAD_SHA" --collapse-ranges \
+            --base-sha "$base" --head-sha "$HEAD_SHA" \
+            --commit-url "$COMMIT_URL" --run-url "$RUN_URL" > coverage-pr-build.md
+          {
+            echo '## PR build'
+            echo
+            echo "Measured and rendered by this PR's own patchcov build. No baseline deltas; see the release Coverage report for those."
+            echo
+            cat coverage-pr-build.md
+          } > coverage-pr-comment.md
+      - name: Publish run summary
+        run: cat coverage-pr-comment.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload PR-build coverage
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-pr-build
+          if-no-files-found: error
+          path: |
+            coverage-pr-head.lcov
+            coverage-pr-comment.md
+      - name: Comment PR-build coverage
+        if: github.event.pull_request.head.repo.fork != true
+        uses: marocchino/sticky-pull-request-comment@v3
+        with:
+          header: coverage-pr-build
+          path: coverage-pr-comment.md
+      # Render/upload/comment before gating so low coverage still leaves a report.
+      - name: Enforce coverage gates with the PR's patchcov
+        env:
+          BASE_SHA: ${{ steps.diff.outputs.base }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          ./target/debug/patchcov diff --report coverage-pr-head.lcov \
+            --base-ref "$BASE_SHA" --head-ref "$HEAD_SHA" \
+            --fail-under-patch 90 --fail-under-lines 95 -o json > /dev/null
