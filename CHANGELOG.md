@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1](https://github.com/rust-works/patchcov/compare/v0.4.0...v0.4.1) - 2026-10-10
+
+### Documentation
+
+- align the baseline notice with rendered reports
+
+### Fixed
+
+- *(render)* avoid implicit baseline and artifact claims
+
+### Other
+
+- Merge pull request #136 from rust-works/issue-133-require-coverage-check
+- require the Coverage check on main
+- dogfood the pull request patchcov build
+- skip the coverage comment on fork pull requests
+- dogfood patchcov-action on pull requests
+
 ## [0.4.0](https://github.com/rust-works/patchcov/compare/v0.3.0...v0.4.0) - 2026-10-09
 
 ### Added
