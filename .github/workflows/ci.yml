@@ -145,9 +145,8 @@ jobs:
             echo
             cat coverage-pr-build.md
           } > coverage-pr-comment.md
-      - name: Publish run summary
-        run: cat coverage-pr-comment.md >> "$GITHUB_STEP_SUMMARY"
       - name: Upload PR-build coverage
+        id: coverage-artifact
         uses: actions/upload-artifact@v7
         with:
           name: coverage-pr-build
@@ -155,6 +154,13 @@ jobs:
           path: |
             coverage-pr-head.lcov
             coverage-pr-comment.md
+      # The archived report has the run link; the upload URL exists only after upload.
+      - name: Link PR-build artifact and publish run summary
+        env:
+          ARTIFACT_URL: ${{ steps.coverage-artifact.outputs.artifact-url }}
+        run: |
+          printf '\n<sub>📦 [PR-build coverage report (LCOV and Markdown)](%s)</sub>\n' "$ARTIFACT_URL" >> coverage-pr-comment.md
+          cat coverage-pr-comment.md >> "$GITHUB_STEP_SUMMARY"
       - name: Comment PR-build coverage
         if: github.event.pull_request.head.repo.fork != true
         uses: marocchino/sticky-pull-request-comment@v3

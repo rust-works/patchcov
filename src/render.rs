@@ -60,7 +60,7 @@ pub struct RenderOptions {
     pub no_explanation: bool,
     /// Link to the full coverage-summary artifact.
     pub artifact_url: Option<String>,
-    /// Link to the CI run.
+    /// Link to the CI run, rendered independently of the artifact URL.
     pub run_url: Option<String>,
     /// Base (merge-base) commit SHA.
     pub base_sha: Option<String>,
@@ -249,9 +249,8 @@ fn render_markdown(diff: &CoverageDiff, opts: &RenderOptions) -> String {
         render_notable_unchanged(diff, &mut out);
     } else {
         out.push_str(
-            "_No baseline available yet (first run, or the `main` baseline artifact was \
-             missing). Per-file deltas will appear on PRs once a baseline has been published \
-             from `main`._\n\n",
+            "_No baseline report supplied. Per-file deltas and indirect coverage changes \
+             require a baseline report._\n\n",
         );
     }
     // Also without a baseline: `ignore` still shapes the total and the patch.
@@ -542,23 +541,22 @@ fn render_indirect_section(diff: &CoverageDiff, out: &mut String) {
 }
 
 fn render_footer(opts: &RenderOptions, out: &mut String) {
-    match opts.artifact_url.as_deref().filter(|u| !u.is_empty()) {
-        Some(artifact) => {
-            out.push_str(&format!(
-                "<sub>📦 [Full per-file coverage summary]({artifact})"
-            ));
-            if let Some(run) = opts.run_url.as_deref().filter(|u| !u.is_empty()) {
-                out.push_str(&format!(" · [run summary]({run})"));
-            }
-            out.push_str("</sub>\n");
-        }
-        None => {
-            out.push_str(
-                "<sub>Full per-file summary is attached as the **coverage-summary** build \
-                 artifact.</sub>\n",
-            );
-        }
+    let artifact = opts.artifact_url.as_deref().filter(|u| !u.is_empty());
+    let run = opts.run_url.as_deref().filter(|u| !u.is_empty());
+    if artifact.is_none() && run.is_none() {
+        return;
     }
+    out.push_str("<sub>");
+    if let Some(artifact) = artifact {
+        out.push_str(&format!("📦 [Full per-file coverage summary]({artifact})"));
+    }
+    if let Some(run) = run {
+        if artifact.is_some() {
+            out.push_str(" · ");
+        }
+        out.push_str(&format!("[run summary]({run})"));
+    }
+    out.push_str("</sub>\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -937,7 +935,11 @@ mod tests {
         assert!(md.contains("### Patch coverage"));
         assert!(md.contains("Patch: **80%** (4/5 new lines covered)"));
         assert!(md.contains("`src/a.rs:9`"));
-        assert!(md.contains("No baseline available yet"));
+        assert!(md.contains("No baseline report supplied"));
+        assert!(md.contains("require a baseline report"));
+        assert!(!md.contains("will appear"));
+        assert!(!md.contains("baseline artifact"));
+        assert!(!md.contains("`main`"));
     }
 
     #[test]
@@ -1388,6 +1390,32 @@ mod tests {
         // Artifact footer with run link.
         assert!(md.contains("[Full per-file coverage summary](https://artifact)"));
         assert!(md.contains("[run summary](https://run)"));
+    }
+
+    #[test]
+    fn markdown_footer_links_are_independent_and_optional() {
+        for artifact in [None, Some(""), Some("https://artifact")] {
+            for run in [None, Some(""), Some("https://run")] {
+                let opts = RenderOptions {
+                    artifact_url: artifact.map(str::to_string),
+                    run_url: run.map(str::to_string),
+                    ..Default::default()
+                };
+                let md = render(&sample_diff(), &opts, OutputFormat::Markdown).unwrap();
+                let has_artifact = artifact == Some("https://artifact");
+                let has_run = run == Some("https://run");
+                assert_eq!(
+                    md.contains("[Full per-file coverage summary](https://artifact)"),
+                    has_artifact,
+                    "{md}"
+                );
+                assert_eq!(md.contains("[run summary](https://run)"), has_run, "{md}");
+                assert_eq!(md.contains("<sub>"), has_artifact || has_run, "{md}");
+                assert_eq!(md.contains(" · "), has_artifact && has_run, "{md}");
+                assert!(!md.contains("coverage-summary"), "{md}");
+                assert!(!md.contains("attached"), "{md}");
+            }
+        }
     }
 
     #[test]
