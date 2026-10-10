@@ -111,6 +111,19 @@ would only repeat the instrumented tests. The job grants `actions: read` as well
 get a read-only token, so the job sets `comment: false` for them: the gates still apply, and the
 numbers are in the run's Summary tab.
 
+CI also runs an advisory `Coverage (PR build)` job on pull requests. It checks out the
+PR head, builds its debug `patchcov` binary with the lockfile, then measures that same
+checkout with cargo-llvm-cov. The local binary renders a separate sticky comment and
+enforces 90% patch coverage and 95% overall line coverage. Its report is also in the
+run summary and the `coverage-pr-build` artifact, including when a coverage gate fails.
+Fork PRs skip the comment and still get the summary, artifact and gates. This job is not
+in the ruleset or required-check list and is skipped on pushes and merge groups.
+
+The existing `Coverage` job continues to test the released binary and action. The PR-build
+job has no baseline, so it reports patch and total coverage without project deltas or
+indirect changes; those remain in the release report. It adds a debug build and a separate
+instrumented test run, with its own cache key and a 15-minute timeout.
+
 `lint-markers` also runs in CI's `Lint` job. This repository's
 [`.patchcov/config.yaml`](.patchcov/config.yaml) limits it to Rust sources, so prose in
 documentation that describes the marker syntax is not flagged.
