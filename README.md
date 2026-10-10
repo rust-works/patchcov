@@ -57,7 +57,7 @@ report so the per-file table appears:
 >
 
 Without `--baseline-report` there is no delta on the `Total` line, no per-file table and no
-indirect changes; a "No baseline available yet" notice stands in for them and the patch
+indirect changes; a "No baseline report supplied" notice stands in for them and the patch
 section is unchanged. With `-o json` or `-o yaml` the same result is structured
 data, in the shape described in the [output schema](docs/reference.md#output-schema):
 
