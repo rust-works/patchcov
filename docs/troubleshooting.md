@@ -124,7 +124,7 @@ also mean the default branch has another name and `origin/HEAD` is not set; run
 - **GitHub Actions:** check out with full history.
 
   ```yaml
-  - uses: actions/checkout@v4
+  - uses: actions/checkout@v7
     with:
       fetch-depth: 0
   ```
