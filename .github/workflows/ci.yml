@@ -93,3 +93,5 @@ jobs:
           version: latest
           fail-under-patch: 90
           fail-under-lines: 95
+          # A fork's token is read-only, so the comment would fail; the gates still apply.
+          comment: ${{ github.event.pull_request.head.repo.fork != true }}

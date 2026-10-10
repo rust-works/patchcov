@@ -108,7 +108,8 @@ compared with. Like the scheduled workflow above it is advisory: it is not in th
 list below, so a red run does not block a merge. It is skipped on `merge_group`, where the action
 would only repeat the instrumented tests. The job grants `actions: read` as well as
 `pull-requests: write` because the baseline is another run's artifact. Pull requests from forks
-get a read-only token, so the comment cannot be posted there.
+get a read-only token, so the job sets `comment: false` for them: the gates still apply, and the
+numbers are in the run's Summary tab.
 
 `lint-markers` also runs in CI's `Lint` job. This repository's
 [`.patchcov/config.yaml`](.patchcov/config.yaml) limits it to Rust sources, so prose in

@@ -259,6 +259,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read               # to download the baseline from the merge base's run
       pull-requests: write        # to post the coverage comment
     steps:
       - uses: actions/checkout@v7
