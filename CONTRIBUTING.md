@@ -100,6 +100,17 @@ It can go red when a transitive dependency raises its MSRV, so it runs weekly an
 required check: do not add it to the ruleset or the list below. Fix a failure by pinning or
 capping the dependency in `Cargo.toml`, or by raising the MSRV on purpose.
 
+CI's `Coverage` job runs [action-works/patchcov-action](https://github.com/action-works/patchcov-action)
+on pull requests, so patchcov measures itself with the workflow it recommends. It posts a sticky
+comment with the patch coverage and the uncovered new lines, fails below 90% patch coverage or 95%
+overall line coverage, and on a push to `main` publishes the baseline that later pull requests are
+compared with. Like the scheduled workflow above it is advisory: it is not in the ruleset or the
+list below, so a red run does not block a merge. It is skipped on `merge_group`, where the action
+would only repeat the instrumented tests. The job grants `actions: read` as well as
+`pull-requests: write` because the baseline is another run's artifact. Pull requests from forks
+get a read-only token, so the job sets `comment: false` for them: the gates still apply, and the
+numbers are in the run's Summary tab.
+
 `lint-markers` also runs in CI's `Lint` job. This repository's
 [`.patchcov/config.yaml`](.patchcov/config.yaml) limits it to Rust sources, so prose in
 documentation that describes the marker syntax is not flagged.

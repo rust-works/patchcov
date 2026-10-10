@@ -259,9 +259,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read               # to download the baseline from the merge base's run
       pull-requests: write        # to post the coverage comment
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0          # full history so the merge base resolves
       - uses: action-works/patchcov-action@v1

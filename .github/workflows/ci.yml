@@ -12,8 +12,9 @@ env:
 
 # Every job sets `timeout-minutes`: the default is 6 hours, and a hung test would otherwise hold a
 # required check until the merge queue gives up at 60 minutes. The limits are several times the
-# slowest run seen over the last 100 runs (113 s, Windows test); the jobs that run tests get 15,
-# the build-only ones 10.
+# slowest run seen over the last 100 runs (113 s, Windows test); the jobs that run tests get 15
+# (so does Coverage, which can build twice when it has to recompute a baseline), the build-only
+# ones 10.
 jobs:
   test:
     name: Test (${{ matrix.os }})
@@ -66,3 +67,31 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo doc --locked --no-deps --document-private-items
+
+  # patchcov measures its own pull requests with the action it ships. It is advisory: not in
+  # the ruleset, so a red run never blocks a merge. The action installs the Rust toolchain,
+  # the cache and cargo-llvm-cov itself. It publishes the baseline on a push to main, from
+  # this workflow (the action looks for `ci.yml`), and comments and gates on pull requests.
+  # On a merge_group run it would only repeat the instrumented tests, so the job is skipped
+  # there; a skipped job counts as passing if it is ever made required. Only `@v1` is
+  # tagged; `v1` defaults to an old patchcov, so `version` asks for the current release.
+  coverage:
+    name: Coverage
+    if: github.event_name != 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read # find and download the baseline artifact of the merge base's run
+      pull-requests: write # post the coverage comment
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # full history so the merge base resolves
+      - uses: action-works/patchcov-action@v1
+        with:
+          version: latest
+          fail-under-patch: 90
+          fail-under-lines: 95
+          # A fork's token is read-only, so the comment would fail; the gates still apply.
+          comment: ${{ github.event.pull_request.head.repo.fork != true }}
