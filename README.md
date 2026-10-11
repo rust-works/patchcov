@@ -264,7 +264,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0          # full history so the merge base resolves
-      - uses: action-works/patchcov-action@v1
+      - uses: action-works/patchcov-action@v2
         with:
           fail-under-patch: 80
 ```
